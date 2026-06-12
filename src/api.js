@@ -189,6 +189,91 @@ export function destroyVm(baseUrl, vmName) {
 }
 
 /**
+ * Start a VM.
+ *
+ * @param {string} baseUrl - Optional external API base URL.
+ * @param {string} vmName - VM name.
+ * @returns {Promise<any>} Start result payload.
+ */
+export function startVm(baseUrl, vmName) {
+  return requestJson(baseUrl, `/api/vms/${encodeURIComponent(vmName)}/start`, {
+    method: 'POST',
+  });
+}
+
+/**
+ * Stop a VM.
+ *
+ * @param {string} baseUrl - Optional external API base URL.
+ * @param {string} vmName - VM name.
+ * @returns {Promise<any>} Stop result payload.
+ */
+export function stopVm(baseUrl, vmName) {
+  return requestJson(baseUrl, `/api/vms/${encodeURIComponent(vmName)}/stop`, {
+    method: 'POST',
+  });
+}
+
+/**
+ * Clone a VM using a new config payload.
+ *
+ * @param {string} baseUrl - Optional external API base URL.
+ * @param {string} sourceVmName - Source VM name.
+ * @param {object} payload - Clone config request payload.
+ * @returns {Promise<any>} Clone result payload.
+ */
+export function cloneVm(baseUrl, sourceVmName, payload) {
+  return requestJson(baseUrl, `/api/vms/${encodeURIComponent(sourceVmName)}/clone`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * Create a VM restore point.
+ *
+ * @param {string} baseUrl - Optional external API base URL.
+ * @param {string} vmName - VM name.
+ * @returns {Promise<any>} Snapshot result payload.
+ */
+export function createVmSnapshot(baseUrl, vmName) {
+  return requestJson(baseUrl, `/api/vms/${encodeURIComponent(vmName)}/snapshots`, {
+    method: 'POST',
+  });
+}
+
+/**
+ * Restore a VM from a restore point.
+ *
+ * @param {string} baseUrl - Optional external API base URL.
+ * @param {string} vmName - VM name.
+ * @param {string} snapshotId - Snapshot identifier.
+ * @returns {Promise<any>} Restore result payload.
+ */
+export function restoreVmSnapshot(baseUrl, vmName, snapshotId) {
+  return requestJson(baseUrl, `/api/vms/${encodeURIComponent(vmName)}/snapshots/${encodeURIComponent(snapshotId)}/restore`, {
+    method: 'POST',
+  });
+}
+
+/**
+ * Delete a restore point.
+ *
+ * @param {string} baseUrl - Optional external API base URL.
+ * @param {string} vmName - VM name.
+ * @param {string} snapshotId - Snapshot identifier.
+ * @returns {Promise<any>} Delete result payload.
+ */
+export function deleteVmSnapshot(baseUrl, vmName, snapshotId) {
+  return requestJson(baseUrl, `/api/vms/${encodeURIComponent(vmName)}/snapshots/${encodeURIComponent(snapshotId)}`, {
+    method: 'DELETE',
+  });
+}
+
+/**
  * Fetch a snapshot of VM logs.
  *
  * @param {string} baseUrl - Optional external API base URL.

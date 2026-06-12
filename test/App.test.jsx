@@ -44,6 +44,7 @@ beforeEach(() => {
             exists: false,
             status: 'unknown',
             network: { mode: 'nat-auto', vm_ip: '192.168.100.50' },
+            snapshots: [],
           },
         ],
       });
@@ -61,6 +62,7 @@ beforeEach(() => {
           exists: false,
           status: 'unknown',
           network: { mode: 'nat-auto', vm_ip: '192.168.100.50' },
+          snapshots: [],
           storedConfigPath: '/configs/devbox.yaml',
           storedConfig: {
             vm: {
@@ -95,11 +97,12 @@ test('opens the clone dialog with a suggested unique VM name', async () => {
   const user = userEvent.setup();
   renderApp();
 
-  const cloneButton = await screen.findByRole('button', { name: /clone config/i });
+  const cloneButton = await screen.findByRole('button', { name: /clone vm/i });
   await user.click(cloneButton);
 
-  expect(await screen.findByRole('dialog', { name: /clone config/i })).toBeInTheDocument();
+  expect(await screen.findByRole('dialog', { name: /clone a vm/i })).toBeInTheDocument();
   await waitFor(() => {
-    expect(screen.getByLabelText(/new vm name/i)).toHaveValue('devbox-2');
+    expect(screen.getByLabelText(/vm name/i)).toHaveValue('devbox-2');
   });
+  expect(screen.getByLabelText(/existing absolute ssh key path/i)).toHaveValue('');
 });

@@ -5,6 +5,7 @@ import {
   buildApiUrl,
   buildRelativeUrl,
   buildVmLogStreamUrl,
+  cloneVm,
   normalizeBaseUrl,
   requestJson,
 } from '../src/api.js';
@@ -58,4 +59,12 @@ test('requestJson throws an error for failed API responses', async () => {
     statusCode: 500,
     details: ['x'],
   });
+});
+
+test('cloneVm posts to the clone API route', async () => {
+  fetch.mockResolvedValue(createJsonResponse({ ok: true }));
+
+  await cloneVm('', 'devbox', { config: { vm: { name: 'clonebox' } } });
+
+  expect(fetch).toHaveBeenCalledWith('/api/vms/devbox/clone', expect.objectContaining({ method: 'POST' }));
 });

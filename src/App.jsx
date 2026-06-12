@@ -1,14 +1,18 @@
 import { startTransition, useDeferredValue, useEffect, useState } from 'react';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
+import BackupRoundedIcon from '@mui/icons-material/BackupRounded';
 import CloudDoneRoundedIcon from '@mui/icons-material/CloudDoneRounded';
 import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import DnsRoundedIcon from '@mui/icons-material/DnsRounded';
 import HubRoundedIcon from '@mui/icons-material/HubRounded';
+import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded';
 import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded';
+import RestoreRoundedIcon from '@mui/icons-material/RestoreRounded';
 import RocketLaunchRoundedIcon from '@mui/icons-material/RocketLaunchRounded';
 import SaveRoundedIcon from '@mui/icons-material/SaveRounded';
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
+import StopRoundedIcon from '@mui/icons-material/StopRounded';
 import TerminalRoundedIcon from '@mui/icons-material/TerminalRounded';
 import {
   Alert,
@@ -42,14 +46,20 @@ import { alpha } from '@mui/material/styles';
 
 import {
   buildVmLogStreamUrl,
+  cloneVm,
   createVm,
+  createVmSnapshot,
+  deleteVmSnapshot,
   destroyVm,
   fetchHealth,
   fetchVm,
   fetchVmLogs,
   fetchVms,
   provisionSavedVm,
+  restoreVmSnapshot,
   saveVmConfig,
+  startVm,
+  stopVm,
 } from './api.js';
 
 export const MAX_VM_NAME_LENGTH = 12;
@@ -62,7 +72,6 @@ const baseFormState = {
   diskGb: '40',
   allowSudo: true,
   trust: 'untrusted',
-  template: 'base',
   networkMode: 'nat-auto',
   bridgeName: 'br0',
   subnetPrefix: '',
@@ -71,6 +80,8 @@ const baseFormState = {
   portsText: '',
   sshPublicKey: '',
   sshKeyFile: '',
+  setupScript: '',
+  setupScriptFile: '',
 };
 
 /**
@@ -214,6 +225,8 @@ export function buildClonedConfig(config, newVmName) {
   const clonedConfig = JSON.parse(JSON.stringify(config));
   const previousVmName = String(clonedConfig.vm.name || '').trim();
   clonedConfig.vm.name = String(newVmName || '').trim();
+  delete clonedConfig.vm.ssh_key_file;
+  delete clonedConfig.network;
 
   if (clonedConfig.paths?.vm_data_dir) {
     if (previousVmName) {
@@ -239,10 +252,55 @@ export function buildClonedConfig(config, newVmName) {
 }
 
 /**
+ * Convert a config payload into form state values.
+ *
+ * @param {object} config - Saved VM config payload.
+ * @returns {object} Form state derived from the config.
+ */
+export function buildFormStateFromConfig(config) {
+  const vm = config?.vm || {};
+  const network = config?.network || {};
+  const dnsResolvers = config?.dns?.resolvers || [];
+  const ports = config?.ports || [];
+
+  return {
+    ...createDefaultFormState(),
+    name: vm.name || '',
+    user: vm.user || '',
+    ramMb: vm.ram_mb ? String(vm.ram_mb) : createDefaultFormState().ramMb,
+    vcpus: vm.vcpus ? String(vm.vcpus) : createDefaultFormState().vcpus,
+    diskGb: vm.disk_gb ? String(vm.disk_gb) : createDefaultFormState().diskGb,
+    allowSudo: Boolean(vm.allow_sudo),
+    trust: vm.trust || createDefaultFormState().trust,
+    networkMode: network.mode || createDefaultFormState().networkMode,
+    bridgeName: network.bridge_name || createDefaultFormState().bridgeName,
+    subnetPrefix: network.subnet_prefix || '',
+    packagesText: (config?.packages || []).join(', '),
+    dnsResolversText: dnsResolvers.join(', '),
+    portsText: ports
+      .map((port) => `${port.host}:${port.guest}/${(port.proto || 'tcp').toLowerCase()}`)
+      .join('\n'),
+    sshKeyFile: vm.ssh_key_file || '',
+    setupScriptFile: config?.scripts?.setup_script_file || '',
+  };
+}
+
+/**
+ * Build clone dialog form state from a source config.
+ *
+ * @param {object} config - Source config payload.
+ * @param {string} newVmName - Suggested target VM name.
+ * @returns {object} Sanitized clone form state.
+ */
+export function buildCloneFormState(config, newVmName) {
+  return buildFormStateFromConfig(buildClonedConfig(config, newVmName));
+}
+
+/**
  * Convert the UI form state into an API request payload.
  *
  * @param {object} formState - Current create/clone dialog form state.
- * @returns {{config: object, sshPublicKey?: string}} Request payload.
+ * @returns {{config: object, sshPublicKey?: string, setupScript?: string}} Request payload.
  */
 export function buildVmPayload(formState) {
   const vm = {
@@ -264,10 +322,6 @@ export function buildVmPayload(formState) {
 
   if (formState.allowSudo) {
     vm.allow_sudo = true;
-  }
-
-  if (formState.template.trim()) {
-    vm.template = formState.template.trim();
   }
 
   if (formState.sshKeyFile.trim() && !formState.sshPublicKey.trim()) {
@@ -303,6 +357,16 @@ export function buildVmPayload(formState) {
   const payload = { config };
   if (formState.sshPublicKey.trim()) {
     payload.sshPublicKey = formState.sshPublicKey.trim();
+  }
+
+  if (formState.setupScriptFile.trim()) {
+    config.scripts = {
+      setup_script_file: formState.setupScriptFile.trim(),
+    };
+  }
+
+  if (formState.setupScript.trim()) {
+    payload.setupScript = formState.setupScript.trim();
   }
 
   return payload;
@@ -470,11 +534,10 @@ export default function App() {
   const [searchText, setSearchText] = useState('');
   const [detailTab, setDetailTab] = useState(0);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
-  const [cloneName, setCloneName] = useState('');
+  const [formMode, setFormMode] = useState('create');
+  const [cloneSourceVmName, setCloneSourceVmName] = useState('');
   const [formState, setFormState] = useState(createDefaultFormState());
   const [submitState, setSubmitState] = useState('idle');
-  const [cloneSubmitState, setCloneSubmitState] = useState('idle');
   const [snapshotLines, setSnapshotLines] = useState('200');
   const [snapshotLoading, setSnapshotLoading] = useState(false);
   const [snapshotLog, setSnapshotLog] = useState('');
@@ -489,7 +552,6 @@ export default function App() {
   const deferredSearchText = useDeferredValue(searchText);
   const knownVmNames = new Set(vms.map((vm) => normalizeVmName(vm.name)));
   const normalizedDraftVmName = normalizeVmName(formState.name);
-  const normalizedCloneVmName = normalizeVmName(cloneName);
 
   let draftPayload = null;
   let draftPayloadError = null;
@@ -522,15 +584,7 @@ export default function App() {
   const provisionableConfig = selectedVm?.storedConfig || selectedVm?.config || null;
   const canCloneConfig = Boolean(clonableConfig);
   const canProvisionStoredConfig = Boolean(selectedVm?.configured && !selectedVm?.exists && provisionableConfig);
-  const cloneNameError = !cloneName.trim()
-    ? 'A VM name is required.'
-    : cloneName.trim().length > MAX_VM_NAME_LENGTH
-      ? `VM names must be ${MAX_VM_NAME_LENGTH} characters or fewer.`
-      : knownVmNames.has(normalizedCloneVmName)
-        ? 'VM name must be unique. Choose a different name.'
-        : selectedVmName && normalizeVmName(selectedVmName) === normalizedCloneVmName
-          ? 'Clone names must differ from the source VM name.'
-          : '';
+  const restorePoints = selectedVm?.snapshots || [];
 
   /**
    * Show a snackbar message.
@@ -634,7 +688,7 @@ export default function App() {
   /**
    * Submit the create dialog as either config-only save or full provisioning.
    *
-   * @param {'config'|'create'} mode - Submission mode.
+   * @param {'config'|'create'|'clone'} mode - Submission mode.
    * @returns {Promise<void>} Resolves after the request and follow-up refresh finish.
    */
   async function handleFormSubmit(mode) {
@@ -645,17 +699,26 @@ export default function App() {
 
     setSubmitState(mode);
     try {
-      const response = mode === 'create'
-        ? await createVm(apiBase, draftPayload)
-        : await saveVmConfig(apiBase, draftPayload);
+      let response;
+      if (formMode === 'clone') {
+        response = await cloneVm(apiBase, cloneSourceVmName, draftPayload);
+      } else {
+        response = mode === 'create'
+          ? await createVm(apiBase, draftPayload)
+          : await saveVmConfig(apiBase, draftPayload);
+      }
 
       const nextVmName = response.vmName || draftPayload.config.vm.name;
       setCreateDialogOpen(false);
+      setFormMode('create');
+      setCloneSourceVmName('');
       setFormState(createDefaultFormState());
       showMessage(
-        mode === 'create'
-          ? `Provisioned ${nextVmName}.`
-          : `Saved config for ${nextVmName}.`,
+        formMode === 'clone'
+          ? `Cloned ${cloneSourceVmName} to ${nextVmName}.`
+          : mode === 'create'
+            ? `Provisioned ${nextVmName}.`
+            : `Saved config for ${nextVmName}.`,
         'success',
       );
       await refreshInventory(nextVmName);
@@ -678,7 +741,7 @@ export default function App() {
     }
 
     const confirmed = window.confirm(
-      `Destroy ${selectedVmName}? The saved config in runtime/configs will be kept.`,
+      `Destroy ${selectedVmName}? The saved config in the provisioner configs directory will be kept.`,
     );
     if (!confirmed) {
       return;
@@ -736,40 +799,151 @@ export default function App() {
     }
 
     const suggestedCloneName = buildUniqueCloneName(selectedVmName, knownVmNames);
-    setCloneName(suggestedCloneName);
-    setCloneDialogOpen(true);
+    setFormMode('clone');
+    setCloneSourceVmName(selectedVmName);
+    setFormState(buildCloneFormState(clonableConfig, suggestedCloneName));
+    setCreateDialogOpen(true);
   }
 
   /**
-   * Save a cloned config under a new VM name.
+   * Open the create dialog with a fresh blank form.
    *
-   * @returns {Promise<void>} Resolves after clone save and refresh complete.
+   * @returns {void}
    */
-  async function handleCloneConfig() {
-    if (!clonableConfig) {
-      showMessage('No config is available to clone for this entry.', 'warning');
+  function openCreateDialog() {
+    setFormMode('create');
+    setCloneSourceVmName('');
+    setFormState(createDefaultFormState());
+    setCreateDialogOpen(true);
+  }
+
+  /**
+   * Start the selected VM.
+   *
+   * @returns {Promise<void>} Resolves after the power action and refresh complete.
+   */
+  async function handleStartVm() {
+    if (!selectedVmName) {
       return;
     }
 
-    if (cloneNameError) {
-      showMessage(cloneNameError, 'warning');
-      return;
-    }
-
-    setCloneSubmitState('saving');
+    setVmActionState('start');
     try {
-      const clonedConfig = buildClonedConfig(clonableConfig, cloneName);
-      const response = await saveVmConfig(apiBase, { config: clonedConfig });
-      const nextVmName = response.vmName || cloneName.trim();
-      setCloneDialogOpen(false);
-      setCloneName('');
-      showMessage(`Cloned config to ${nextVmName}.`, 'success');
-      await refreshInventory(nextVmName);
-      await loadVmDetails(nextVmName);
+      await startVm(apiBase, selectedVmName);
+      showMessage(`Started ${selectedVmName}.`, 'success');
+      await refreshInventory(selectedVmName);
+      await loadVmDetails(selectedVmName);
     } catch (error) {
       showMessage(error.message, 'error');
     } finally {
-      setCloneSubmitState('idle');
+      setVmActionState('idle');
+    }
+  }
+
+  /**
+   * Stop the selected VM.
+   *
+   * @returns {Promise<void>} Resolves after the power action and refresh complete.
+   */
+  async function handleStopVm() {
+    if (!selectedVmName) {
+      return;
+    }
+
+    setVmActionState('stop');
+    try {
+      await stopVm(apiBase, selectedVmName);
+      showMessage(`Stopped ${selectedVmName}.`, 'success');
+      await refreshInventory(selectedVmName);
+      await loadVmDetails(selectedVmName);
+    } catch (error) {
+      showMessage(error.message, 'error');
+    } finally {
+      setVmActionState('idle');
+    }
+  }
+
+  /**
+   * Create a restore point for the selected VM.
+   *
+   * @returns {Promise<void>} Resolves after snapshot creation and refresh complete.
+   */
+  async function handleCreateRestorePoint() {
+    if (!selectedVmName) {
+      return;
+    }
+
+    setVmActionState('snapshot-create');
+    try {
+      await createVmSnapshot(apiBase, selectedVmName);
+      showMessage(`Created a restore point for ${selectedVmName}.`, 'success');
+      await refreshInventory(selectedVmName);
+      await loadVmDetails(selectedVmName);
+    } catch (error) {
+      showMessage(error.message, 'error');
+    } finally {
+      setVmActionState('idle');
+    }
+  }
+
+  /**
+   * Restore the selected VM from a restore point.
+   *
+   * @param {string} snapshotId - Snapshot identifier.
+   * @returns {Promise<void>} Resolves after restore and refresh complete.
+   */
+  async function handleRestoreSnapshot(snapshotId) {
+    if (!selectedVmName || !snapshotId) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Restore ${selectedVmName} to ${snapshotId}? The VM will be stopped and left powered off after the restore.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setVmActionState(`snapshot-restore:${snapshotId}`);
+    try {
+      await restoreVmSnapshot(apiBase, selectedVmName, snapshotId);
+      showMessage(`Restored ${selectedVmName} from ${snapshotId}.`, 'success');
+      await refreshInventory(selectedVmName);
+      await loadVmDetails(selectedVmName);
+      await loadSnapshot(selectedVmName);
+    } catch (error) {
+      showMessage(error.message, 'error');
+    } finally {
+      setVmActionState('idle');
+    }
+  }
+
+  /**
+   * Delete a restore point.
+   *
+   * @param {string} snapshotId - Snapshot identifier.
+   * @returns {Promise<void>} Resolves after deletion and refresh complete.
+   */
+  async function handleDeleteRestorePoint(snapshotId) {
+    if (!selectedVmName || !snapshotId) {
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete restore point ${snapshotId} for ${selectedVmName}?`);
+    if (!confirmed) {
+      return;
+    }
+
+    setVmActionState(`snapshot-delete:${snapshotId}`);
+    try {
+      await deleteVmSnapshot(apiBase, selectedVmName, snapshotId);
+      showMessage(`Deleted restore point ${snapshotId}.`, 'success');
+      await refreshInventory(selectedVmName);
+      await loadVmDetails(selectedVmName);
+    } catch (error) {
+      showMessage(error.message, 'error');
+    } finally {
+      setVmActionState('idle');
     }
   }
 
@@ -904,7 +1078,7 @@ export default function App() {
                       variant="outlined"
                       color="secondary"
                       startIcon={<AddRoundedIcon />}
-                      onClick={() => setCreateDialogOpen(true)}
+                      onClick={openCreateDialog}
                     >
                       New VM
                     </Button>
@@ -1062,7 +1236,7 @@ export default function App() {
                     Create your first machine definition or select an existing item from the inventory to
                     inspect its live status, config, and logs.
                   </Typography>
-                  <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={() => setCreateDialogOpen(true)}>
+                  <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={openCreateDialog}>
                     Create VM Definition
                   </Button>
                 </Stack>
@@ -1091,7 +1265,38 @@ export default function App() {
                           disabled={vmActionState !== 'idle'}
                           onClick={openCloneDialog}
                         >
-                          Clone config
+                          Clone VM
+                        </Button>
+                      ) : null}
+                      {selectedVm?.exists && String(selectedVm?.status).toLowerCase() !== 'running' ? (
+                        <Button
+                          variant="contained"
+                          startIcon={<PlayArrowRoundedIcon />}
+                          disabled={vmActionState !== 'idle'}
+                          onClick={() => void handleStartVm()}
+                        >
+                          {vmActionState === 'start' ? 'Starting…' : 'Start'}
+                        </Button>
+                      ) : null}
+                      {selectedVm?.exists && String(selectedVm?.status).toLowerCase() === 'running' ? (
+                        <Button
+                          variant="outlined"
+                          color="warning"
+                          startIcon={<StopRoundedIcon />}
+                          disabled={vmActionState !== 'idle'}
+                          onClick={() => void handleStopVm()}
+                        >
+                          {vmActionState === 'stop' ? 'Stopping…' : 'Stop'}
+                        </Button>
+                      ) : null}
+                      {selectedVm?.exists ? (
+                        <Button
+                          variant="outlined"
+                          startIcon={<BackupRoundedIcon />}
+                          disabled={vmActionState !== 'idle'}
+                          onClick={() => void handleCreateRestorePoint()}
+                        >
+                          {vmActionState === 'snapshot-create' ? 'Saving…' : 'Create restore point'}
                         </Button>
                       ) : null}
                       {canProvisionStoredConfig ? (
@@ -1182,6 +1387,7 @@ export default function App() {
                   <Tabs value={detailTab} onChange={(_event, nextValue) => setDetailTab(nextValue)}>
                     <Tab label="Overview" />
                     <Tab label="Config" />
+                    <Tab label="Restore Points" />
                     <Tab label="Logs" />
                   </Tabs>
 
@@ -1270,6 +1476,87 @@ export default function App() {
                   ) : null}
 
                   {detailTab === 2 ? (
+                    <Stack spacing={2}>
+                      <Paper sx={{ p: 2.5 }}>
+                        <Stack spacing={2}>
+                          <Stack
+                            direction={{ xs: 'column', md: 'row' }}
+                            justifyContent="space-between"
+                            alignItems={{ xs: 'stretch', md: 'center' }}
+                            spacing={2}
+                          >
+                            <Box>
+                              <Typography variant="h6">Restore points</Typography>
+                              <Typography variant="body2" color="text.secondary">
+                                Snapshots copy the VM disk plus saved config-side assets so you can roll back to a known host state.
+                              </Typography>
+                            </Box>
+                            <Button
+                              variant="outlined"
+                              startIcon={<BackupRoundedIcon />}
+                              disabled={vmActionState !== 'idle' || !selectedVm?.exists}
+                              onClick={() => void handleCreateRestorePoint()}
+                            >
+                              {vmActionState === 'snapshot-create' ? 'Saving…' : 'Create restore point'}
+                            </Button>
+                          </Stack>
+                          {restorePoints.length === 0 ? (
+                            <Alert severity="info">No restore points have been created for this VM yet.</Alert>
+                          ) : (
+                            <List sx={{ p: 0 }}>
+                              {restorePoints.map((snapshot) => (
+                                <ListItemButton
+                                  key={snapshot.snapshot_id}
+                                  disableRipple
+                                  sx={{
+                                    mb: 1,
+                                    borderRadius: 2,
+                                    border: (theme) => `1px solid ${alpha(theme.palette.common.white, 0.06)}`,
+                                    alignItems: 'stretch',
+                                  }}
+                                >
+                                  <Stack
+                                    direction={{ xs: 'column', md: 'row' }}
+                                    justifyContent="space-between"
+                                    spacing={2}
+                                    sx={{ width: '100%' }}
+                                  >
+                                    <ListItemText
+                                      primary={snapshot.snapshot_id}
+                                      secondary={snapshot.created_at || 'Creation time unavailable'}
+                                    />
+                                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                      <Button
+                                        size="small"
+                                        variant="outlined"
+                                        startIcon={<RestoreRoundedIcon />}
+                                        disabled={vmActionState !== 'idle'}
+                                        onClick={() => void handleRestoreSnapshot(snapshot.snapshot_id)}
+                                      >
+                                        Restore
+                                      </Button>
+                                      <Button
+                                        size="small"
+                                        color="error"
+                                        variant="outlined"
+                                        startIcon={<DeleteOutlineRoundedIcon />}
+                                        disabled={vmActionState !== 'idle'}
+                                        onClick={() => void handleDeleteRestorePoint(snapshot.snapshot_id)}
+                                      >
+                                        Delete
+                                      </Button>
+                                    </Stack>
+                                  </Stack>
+                                </ListItemButton>
+                              ))}
+                            </List>
+                          )}
+                        </Stack>
+                      </Paper>
+                    </Stack>
+                  ) : null}
+
+                  {detailTab === 3 ? (
                     <Stack spacing={2}>
                       <Paper sx={{ p: 2.5 }}>
                         <Stack spacing={2}>
@@ -1383,78 +1670,32 @@ export default function App() {
       </Container>
 
       <Dialog
-        open={cloneDialogOpen}
-        onClose={() => {
-          if (cloneSubmitState === 'idle') {
-            setCloneDialogOpen(false);
-            setCloneName('');
-          }
-        }}
-        fullWidth
-        maxWidth="sm"
-      >
-        <DialogTitle>Clone config</DialogTitle>
-        <DialogContent dividers>
-          <Stack spacing={2.5} sx={{ pt: 1 }}>
-            <Alert severity="info">
-              This copies the selected VM configuration into a new saved config with a different VM name.
-              Live runtime state is not copied.
-            </Alert>
-            <TextField
-              label="Source VM"
-              value={selectedVmName}
-              InputProps={{ readOnly: true }}
-            />
-            <TextField
-              autoFocus
-              label="New VM name"
-              value={cloneName}
-              onChange={(event) => setCloneName(event.target.value)}
-              error={Boolean(cloneNameError)}
-              helperText={cloneNameError || `VM names must be unique and ${MAX_VM_NAME_LENGTH} characters or fewer.`}
-            />
-            <Typography variant="body2" color="text.secondary">
-              VM-specific artifact paths are regenerated for the clone when needed so the new config does not
-              reuse the original VM data directory.
-            </Typography>
-          </Stack>
-        </DialogContent>
-        <DialogActions sx={{ px: 3, py: 2 }}>
-          <Button
-            onClick={() => {
-              if (cloneSubmitState === 'idle') {
-                setCloneDialogOpen(false);
-                setCloneName('');
-              }
-            }}
-          >
-            Cancel
-          </Button>
-          <Button
-            variant="contained"
-            color="secondary"
-            startIcon={<ContentCopyRoundedIcon />}
-            disabled={cloneSubmitState !== 'idle' || Boolean(cloneNameError)}
-            onClick={() => void handleCloneConfig()}
-          >
-            {cloneSubmitState === 'saving' ? 'Cloning…' : 'Save cloned config'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      <Dialog
         open={createDialogOpen}
         onClose={() => {
           if (submitState === 'idle') {
             setCreateDialogOpen(false);
+            setFormMode('create');
+            setCloneSourceVmName('');
           }
         }}
         fullWidth
         maxWidth="lg"
       >
-        <DialogTitle>Create or save a VM definition</DialogTitle>
+        <DialogTitle>{formMode === 'clone' ? 'Clone a VM' : 'Create or save a VM definition'}</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={3} sx={{ pt: 1 }}>
+            {formMode === 'clone' ? (
+              <Alert severity="info">
+                This clone uses the source disk from <strong>{cloneSourceVmName}</strong>. The network settings and tenant SSH key inputs were intentionally cleared so the new VM does not reuse the source IP/MAC identity or access key material.
+              </Alert>
+            ) : null}
+            {formMode === 'clone' ? (
+              <TextField
+                label="Source VM"
+                value={cloneSourceVmName}
+                InputProps={{ readOnly: true }}
+              />
+            ) : null}
             <Box
               sx={{
                 display: 'grid',
@@ -1504,11 +1745,6 @@ export default function App() {
                 label="Disk (GB)"
                 value={formState.diskGb}
                 onChange={(event) => setFormState((current) => ({ ...current, diskGb: event.target.value }))}
-              />
-              <TextField
-                label="Template"
-                value={formState.template}
-                onChange={(event) => setFormState((current) => ({ ...current, template: event.target.value }))}
               />
               <TextField
                 select
@@ -1593,7 +1829,7 @@ export default function App() {
                 onChange={(event) =>
                   setFormState((current) => ({ ...current, sshPublicKey: event.target.value }))
                 }
-                helperText="When provided, the API stores the key under runtime/keys/users and rewrites vm.ssh_key_file automatically."
+                helperText="When provided, the API stores the key under the provisioner user-keys directory and rewrites vm.ssh_key_file automatically."
               />
               <TextField
                 multiline
@@ -1602,6 +1838,22 @@ export default function App() {
                 value={formState.sshKeyFile}
                 onChange={(event) => setFormState((current) => ({ ...current, sshKeyFile: event.target.value }))}
                 helperText="Use this only when you are not submitting sshPublicKey."
+              />
+              <TextField
+                multiline
+                minRows={6}
+                label="Post-cloud-init setup script"
+                value={formState.setupScript}
+                onChange={(event) => setFormState((current) => ({ ...current, setupScript: event.target.value }))}
+                helperText="Optional shell script content to run after the built-in cloud-init commands finish."
+              />
+              <TextField
+                multiline
+                minRows={2}
+                label="Existing absolute setup script path"
+                value={formState.setupScriptFile}
+                onChange={(event) => setFormState((current) => ({ ...current, setupScriptFile: event.target.value }))}
+                helperText="Use this only when you are not submitting setupScript content."
               />
             </Box>
 
@@ -1619,36 +1871,56 @@ export default function App() {
             onClick={() => {
               if (submitState === 'idle') {
                 setCreateDialogOpen(false);
+                setFormMode('create');
+                setCloneSourceVmName('');
               }
             }}
           >
             Cancel
           </Button>
-          <Tooltip title="Persist the config without provisioning a VM.">
-            <span>
-              <Button
-                variant="outlined"
-                color="secondary"
-                startIcon={<SaveRoundedIcon />}
-                disabled={submitState !== 'idle' || !draftPayload}
-                onClick={() => void handleFormSubmit('config')}
-              >
-                {submitState === 'config' ? 'Saving…' : 'Save config'}
-              </Button>
-            </span>
-          </Tooltip>
-          <Tooltip title="Save the config and call the provisioner immediately.">
-            <span>
-              <Button
-                variant="contained"
-                startIcon={<RocketLaunchRoundedIcon />}
-                disabled={submitState !== 'idle' || !draftPayload}
-                onClick={() => void handleFormSubmit('create')}
-              >
-                {submitState === 'create' ? 'Provisioning…' : 'Create VM'}
-              </Button>
-            </span>
-          </Tooltip>
+          {formMode === 'clone' ? (
+            <Tooltip title="Save the cloned config and create the new VM from the source disk.">
+              <span>
+                <Button
+                  variant="contained"
+                  color="secondary"
+                  startIcon={<ContentCopyRoundedIcon />}
+                  disabled={submitState !== 'idle' || !draftPayload}
+                  onClick={() => void handleFormSubmit('clone')}
+                >
+                  {submitState === 'clone' ? 'Cloning…' : 'Clone VM'}
+                </Button>
+              </span>
+            </Tooltip>
+          ) : (
+            <>
+              <Tooltip title="Persist the config without provisioning a VM.">
+                <span>
+                  <Button
+                    variant="outlined"
+                    color="secondary"
+                    startIcon={<SaveRoundedIcon />}
+                    disabled={submitState !== 'idle' || !draftPayload}
+                    onClick={() => void handleFormSubmit('config')}
+                  >
+                    {submitState === 'config' ? 'Saving…' : 'Save config'}
+                  </Button>
+                </span>
+              </Tooltip>
+              <Tooltip title="Save the config and call the provisioner immediately.">
+                <span>
+                  <Button
+                    variant="contained"
+                    startIcon={<RocketLaunchRoundedIcon />}
+                    disabled={submitState !== 'idle' || !draftPayload}
+                    onClick={() => void handleFormSubmit('create')}
+                  >
+                    {submitState === 'create' ? 'Provisioning…' : 'Create VM'}
+                  </Button>
+                </span>
+              </Tooltip>
+            </>
+          )}
         </DialogActions>
       </Dialog>
 

@@ -103,12 +103,12 @@ function buildLandingPage() {
         <h1>Client Documentation</h1>
         <p>
           Generated reference documentation for the React interface, API client helpers,
-          clone/provision flows, dashboard utilities, and VM log user experience.
+          create/clone flows, power controls, restore points, and VM log user experience.
         </p>
         <ul>
-          <li>Material UI dashboard and VM detail interactions</li>
-          <li>Config cloning and uniqueness enforcement helpers</li>
-          <li>Provision-from-saved-config and log streaming behavior</li>
+          <li>Material UI dashboard, VM detail interactions, and power controls</li>
+          <li>Config cloning plus SSH key and setup-script payload helpers</li>
+          <li>Provision-from-saved-config, restore point, and log streaming behavior</li>
           <li>Unit and end-to-end test coverage outputs</li>
         </ul>
         <div class="actions">
