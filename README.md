@@ -10,8 +10,9 @@ When this repository is checked out as part of the full `homelab-vm-provisioner-
 - VM inventory overview with live status chips
 - Detailed VM inspection view
 - Config save and VM create flows
+- Tenant/network-group aware VM create and full-clone flows
 - Provision saved configs into VMs later from the detail view
-- Config cloning popup with VM renaming
+- Full VM clone dialog with VM renaming and sanitized runtime fields
 - VM start and stop actions
 - VM destroy action
 - Restore point create, restore, and delete actions
@@ -98,11 +99,15 @@ VITE_API_BASE_URL=http://localhost:3000
 
 - The log stream view follows the API's SSE endpoint at `GET /api/vms/:name/logs/stream`.
 - The create dialog supports both config-only saves and immediate VM provisioning.
+- VM create/clone flows now select or create a user-owned network group instead of hand-authoring one-off NAT networks.
+- New network groups allocate `/28` subnets from the API's global pool by default.
+- The detail view exposes per-VM same-group traffic, internet access, hypervisor host access, and admin-only private LAN access toggles.
 - The create and clone flows can either upload setup script content or reference an existing absolute setup script path.
 - The inventory intentionally shows only VMs that already have saved configs in the API.
-- Saved configs can be cloned to a new unique VM name from the detail header.
+- Provisioned VMs can be full-cloned to a new unique VM name from the detail header.
 - VM names are checked for uniqueness in the UI against visible configured VMs and enforced again by the API against all libvirt VM names on the host.
-- The detail view includes start, stop, restore point, and log actions for configured VMs.
+- The detail view includes start, stop, snapshot, and log actions for configured VMs.
+- Forwarded ports are modeled per VM and rendered against the VM's assigned managed IP inside its network group.
 - The destroy action removes the VM through the API but leaves the saved API config intact for reprovisioning.
 
 ## Developer Commands

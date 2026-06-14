@@ -6,8 +6,12 @@ import {
   buildRelativeUrl,
   buildVmLogStreamUrl,
   cloneVm,
+  createNetworkGroup,
+  fetchNetworkGroups,
+  fetchUsers,
   normalizeBaseUrl,
   requestJson,
+  updateVmPolicy,
 } from '../src/api.js';
 
 function createJsonResponse(body, status = 200) {
@@ -67,4 +71,42 @@ test('cloneVm posts to the clone API route', async () => {
   await cloneVm('', 'devbox', { config: { vm: { name: 'clonebox' } } });
 
   expect(fetch).toHaveBeenCalledWith('/api/vms/devbox/clone', expect.objectContaining({ method: 'POST' }));
+});
+
+test('fetchUsers hits the users API route', async () => {
+  fetch.mockResolvedValue(createJsonResponse({ users: [] }));
+
+  await fetchUsers('');
+
+  expect(fetch).toHaveBeenCalledWith('/api/users', expect.anything());
+});
+
+test('fetchNetworkGroups hits the network-group API route', async () => {
+  fetch.mockResolvedValue(createJsonResponse({ networkGroups: [] }));
+
+  await fetchNetworkGroups('');
+
+  expect(fetch).toHaveBeenCalledWith('/api/network-groups', expect.anything());
+});
+
+test('createNetworkGroup posts to the network-group API route', async () => {
+  fetch.mockResolvedValue(createJsonResponse({ networkGroup: { id: 'ng-test' } }));
+
+  await createNetworkGroup('', { ownerUserId: 'user-admin', name: 'default-admin' });
+
+  expect(fetch).toHaveBeenCalledWith(
+    '/api/network-groups',
+    expect.objectContaining({ method: 'POST' }),
+  );
+});
+
+test('updateVmPolicy patches the VM policy route', async () => {
+  fetch.mockResolvedValue(createJsonResponse({ ok: true }));
+
+  await updateVmPolicy('', 'devbox', { allow_same_group_traffic: false });
+
+  expect(fetch).toHaveBeenCalledWith(
+    '/api/vms/devbox/policy',
+    expect.objectContaining({ method: 'PATCH' }),
+  );
 });

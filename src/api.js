@@ -108,6 +108,43 @@ export function fetchHealth(baseUrl) {
 }
 
 /**
+ * Fetch persisted tenant/user records.
+ *
+ * @param {string} baseUrl - Optional external API base URL.
+ * @returns {Promise<any>} User list payload.
+ */
+export function fetchUsers(baseUrl) {
+  return requestJson(baseUrl, '/api/users');
+}
+
+/**
+ * Fetch configured network groups.
+ *
+ * @param {string} baseUrl - Optional external API base URL.
+ * @returns {Promise<any>} Network-group list payload.
+ */
+export function fetchNetworkGroups(baseUrl) {
+  return requestJson(baseUrl, '/api/network-groups');
+}
+
+/**
+ * Create a new network group.
+ *
+ * @param {string} baseUrl - Optional external API base URL.
+ * @param {object} payload - Network-group request payload.
+ * @returns {Promise<any>} Created network-group payload.
+ */
+export function createNetworkGroup(baseUrl, payload) {
+  return requestJson(baseUrl, '/api/network-groups', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
  * Fetch the configured VM inventory.
  *
  * @param {string} baseUrl - Optional external API base URL.
@@ -215,6 +252,24 @@ export function stopVm(baseUrl, vmName) {
 }
 
 /**
+ * Update saved per-VM network policy flags.
+ *
+ * @param {string} baseUrl - Optional external API base URL.
+ * @param {string} vmName - VM name.
+ * @param {object} payload - Policy patch payload.
+ * @returns {Promise<any>} Updated config payload.
+ */
+export function updateVmPolicy(baseUrl, vmName, payload) {
+  return requestJson(baseUrl, `/api/vms/${encodeURIComponent(vmName)}/policy`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
  * Clone a VM using a new config payload.
  *
  * @param {string} baseUrl - Optional external API base URL.
@@ -233,7 +288,7 @@ export function cloneVm(baseUrl, sourceVmName, payload) {
 }
 
 /**
- * Create a VM restore point.
+ * Create a VM snapshot.
  *
  * @param {string} baseUrl - Optional external API base URL.
  * @param {string} vmName - VM name.
@@ -246,7 +301,7 @@ export function createVmSnapshot(baseUrl, vmName) {
 }
 
 /**
- * Restore a VM from a restore point.
+ * Restore a VM from a snapshot.
  *
  * @param {string} baseUrl - Optional external API base URL.
  * @param {string} vmName - VM name.
@@ -260,7 +315,7 @@ export function restoreVmSnapshot(baseUrl, vmName, snapshotId) {
 }
 
 /**
- * Delete a restore point.
+ * Delete a VM snapshot.
  *
  * @param {string} baseUrl - Optional external API base URL.
  * @param {string} vmName - VM name.

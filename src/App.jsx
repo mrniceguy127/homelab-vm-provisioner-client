@@ -47,11 +47,14 @@ import { alpha } from '@mui/material/styles';
 import {
   buildVmLogStreamUrl,
   cloneVm,
+  createNetworkGroup,
   createVm,
   createVmSnapshot,
   deleteVmSnapshot,
   destroyVm,
   fetchHealth,
+  fetchNetworkGroups,
+  fetchUsers,
   fetchVm,
   fetchVmLogs,
   fetchVms,
@@ -60,21 +63,27 @@ import {
   saveVmConfig,
   startVm,
   stopVm,
+  updateVmPolicy,
 } from './api.js';
 
-export const MAX_VM_NAME_LENGTH = 12;
+export const MAX_VM_NAME_LENGTH = 63;
 
 const baseFormState = {
   name: '',
   user: '',
+  ownerUserId: '',
+  networkGroupId: '',
+  newNetworkGroupName: '',
+  newNetworkGroupProfile: 'isolated_nat',
   ramMb: '4096',
   vcpus: '2',
   diskGb: '40',
   allowSudo: true,
+  allowSameGroupTraffic: true,
+  allowHostAccess: true,
+  allowPrivateLanAccess: false,
+  internetAccess: true,
   trust: 'untrusted',
-  networkMode: 'nat-auto',
-  bridgeName: 'br0',
-  subnetPrefix: '',
   packagesText: '',
   dnsResolversText: '',
   portsText: '',
@@ -225,8 +234,11 @@ export function buildClonedConfig(config, newVmName) {
   const clonedConfig = JSON.parse(JSON.stringify(config));
   const previousVmName = String(clonedConfig.vm.name || '').trim();
   clonedConfig.vm.name = String(newVmName || '').trim();
+  delete clonedConfig.vm.mac_address;
+  delete clonedConfig.vm.ip_address;
   delete clonedConfig.vm.ssh_key_file;
   delete clonedConfig.network;
+  delete clonedConfig.ports;
 
   if (clonedConfig.paths?.vm_data_dir) {
     if (previousVmName) {
@@ -270,11 +282,14 @@ export function buildFormStateFromConfig(config) {
     ramMb: vm.ram_mb ? String(vm.ram_mb) : createDefaultFormState().ramMb,
     vcpus: vm.vcpus ? String(vm.vcpus) : createDefaultFormState().vcpus,
     diskGb: vm.disk_gb ? String(vm.disk_gb) : createDefaultFormState().diskGb,
+    ownerUserId: vm.owner_user_id || network.owner_user_id || '',
+    networkGroupId: vm.network_group_id || network.network_group_id || '',
     allowSudo: Boolean(vm.allow_sudo),
+    allowSameGroupTraffic: vm.allow_same_group_traffic !== false,
+    allowHostAccess: vm.allow_host_access !== false,
+    allowPrivateLanAccess: Boolean(vm.allow_private_lan_access),
+    internetAccess: vm.internet_access !== false,
     trust: vm.trust || createDefaultFormState().trust,
-    networkMode: network.mode || createDefaultFormState().networkMode,
-    bridgeName: network.bridge_name || createDefaultFormState().bridgeName,
-    subnetPrefix: network.subnet_prefix || '',
     packagesText: (config?.packages || []).join(', '),
     dnsResolversText: dnsResolvers.join(', '),
     portsText: ports
@@ -306,9 +321,17 @@ export function buildVmPayload(formState) {
   const vm = {
     name: formState.name.trim(),
     user: formState.user.trim(),
+    owner_user_id: String(formState.ownerUserId || '').trim(),
+    network_group_id: formState.networkGroupId === '__new__'
+      ? '__new__'
+      : String(formState.networkGroupId || '').trim(),
     ram_mb: parsePositiveInteger(formState.ramMb, 'RAM'),
     vcpus: parsePositiveInteger(formState.vcpus, 'vCPUs'),
     disk_gb: parsePositiveInteger(formState.diskGb, 'Disk size'),
+    allow_same_group_traffic: Boolean(formState.allowSameGroupTraffic),
+    allow_host_access: Boolean(formState.allowHostAccess),
+    allow_private_lan_access: Boolean(formState.allowPrivateLanAccess),
+    internet_access: Boolean(formState.internetAccess),
     trust: formState.trust,
   };
 
@@ -320,6 +343,18 @@ export function buildVmPayload(formState) {
     throw new Error('Tenant user is required.');
   }
 
+  if (!vm.owner_user_id) {
+    throw new Error('Owner user is required.');
+  }
+
+  if (!vm.network_group_id) {
+    throw new Error('Choose an existing network group or create a new one.');
+  }
+
+  if (vm.network_group_id === '__new__' && !String(formState.newNetworkGroupName || '').trim()) {
+    throw new Error('A new network group name is required.');
+  }
+
   if (formState.allowSudo) {
     vm.allow_sudo = true;
   }
@@ -329,15 +364,6 @@ export function buildVmPayload(formState) {
   }
 
   const config = { vm };
-
-  const network = { mode: formState.networkMode };
-  if (formState.networkMode === 'bridge' && formState.bridgeName.trim()) {
-    network.bridge_name = formState.bridgeName.trim();
-  }
-  if (formState.networkMode === 'nat-custom' && formState.subnetPrefix.trim()) {
-    network.subnet_prefix = formState.subnetPrefix.trim();
-  }
-  config.network = network;
 
   const packages = parseCommaSeparatedList(formState.packagesText);
   if (packages.length > 0) {
@@ -399,6 +425,16 @@ export function buildStatusDescriptor(vm) {
 }
 
 /**
+ * Determine whether a VM is currently running.
+ *
+ * @param {object|null} vm - VM inventory or detail object.
+ * @returns {boolean} True when the VM exists and reports a running state.
+ */
+export function isVmRunning(vm) {
+  return Boolean(vm?.exists) && String(vm?.status).toLowerCase() === 'running';
+}
+
+/**
  * Pretty-print a value for JSON panels.
  *
  * @param {unknown} value - Value to render.
@@ -419,9 +455,10 @@ export function formatNetworkSummary(vm) {
     return 'No discovered network';
   }
 
-  const mode = vm.network.mode || 'unknown';
+  const mode = vm.network.profile || vm.network.mode || 'unknown';
+  const groupName = vm.network.group_name || vm.network_group_id;
   const address = vm.ip_address || vm.network.vm_ip || 'IP unavailable';
-  return `${mode} • ${address}`;
+  return groupName ? `${groupName} • ${mode} • ${address}` : `${mode} • ${address}`;
 }
 
 /**
@@ -526,6 +563,8 @@ export default function App() {
   const [apiBaseInput, setApiBaseInput] = useState(defaultApiBase);
   const [apiBase, setApiBase] = useState(defaultApiBase);
   const [health, setHealth] = useState({ state: 'checking', message: 'Checking API' });
+  const [users, setUsers] = useState([]);
+  const [networkGroups, setNetworkGroups] = useState([]);
   const [vms, setVms] = useState([]);
   const [selectedVmName, setSelectedVmName] = useState('');
   const [selectedVm, setSelectedVm] = useState(null);
@@ -552,6 +591,11 @@ export default function App() {
   const deferredSearchText = useDeferredValue(searchText);
   const knownVmNames = new Set(vms.map((vm) => normalizeVmName(vm.name)));
   const normalizedDraftVmName = normalizeVmName(formState.name);
+  const ownerScopedNetworkGroups = networkGroups.filter(
+    (group) => !formState.ownerUserId || group.owner_user_id === formState.ownerUserId,
+  );
+  const selectedVmOwner = users.find((user) => user.id === selectedVm?.owner_user_id) || null;
+  const selectedVmNetworkGroup = networkGroups.find((group) => group.id === selectedVm?.network_group_id) || null;
 
   let draftPayload = null;
   let draftPayloadError = null;
@@ -572,7 +616,16 @@ export default function App() {
       return true;
     }
 
-    return [vm.name, vm.status, vm.ip_address, vm.network?.mode, vm.trust]
+    return [
+      vm.name,
+      vm.status,
+      vm.ip_address,
+      vm.network?.mode,
+      vm.network?.profile,
+      vm.network?.group_name,
+      vm.network_group_id,
+      vm.trust,
+    ]
       .filter(Boolean)
       .some((value) => String(value).toLowerCase().includes(searchNeedle));
   });
@@ -582,9 +635,16 @@ export default function App() {
   const issueCount = vms.filter((vm) => vm.provisionerError || (!vm.exists && !vm.configured)).length;
   const clonableConfig = selectedVm?.storedConfig || selectedVm?.config || null;
   const provisionableConfig = selectedVm?.storedConfig || selectedVm?.config || null;
-  const canCloneConfig = Boolean(clonableConfig);
+  const hasClonableConfig = Boolean(clonableConfig);
+  const selectedVmIsRunning = isVmRunning(selectedVm);
+  const canCloneVm = Boolean(selectedVm?.exists && clonableConfig);
   const canProvisionStoredConfig = Boolean(selectedVm?.configured && !selectedVm?.exists && provisionableConfig);
-  const restorePoints = selectedVm?.snapshots || [];
+  const canCreateSnapshot = Boolean(selectedVm?.exists);
+  const canStartSelectedVm = Boolean(selectedVm?.exists) && !selectedVmIsRunning;
+  const canStopSelectedVm = selectedVmIsRunning;
+  const powerStateLabel = !selectedVm?.exists ? 'Not provisioned' : selectedVmIsRunning ? 'Running' : 'Stopped';
+  const powerStateColor = !selectedVm?.exists ? 'default' : selectedVmIsRunning ? 'success' : 'warning';
+  const snapshots = selectedVm?.snapshots || [];
 
   /**
    * Show a snackbar message.
@@ -598,6 +658,21 @@ export default function App() {
   }
 
   /**
+   * Build a blank create form seeded with the first available owner/group.
+   *
+   * @returns {object} Metadata-aware form state.
+   */
+  function createMetadataAwareFormState() {
+    const nextOwnerUserId = users[0]?.id || '';
+    const nextNetworkGroupId = networkGroups.find((group) => group.owner_user_id === nextOwnerUserId)?.id || '';
+    return {
+      ...createDefaultFormState(),
+      ownerUserId: nextOwnerUserId,
+      networkGroupId: nextNetworkGroupId,
+    };
+  }
+
+  /**
    * Refresh the configured VM inventory and API health state.
    *
    * @param {string} [preferredName=selectedVmName] - Preferred VM to keep selected after refresh.
@@ -607,8 +682,10 @@ export default function App() {
     setInventoryLoading(true);
     setHealth({ state: 'checking', message: 'Checking API' });
 
-    const [healthResult, inventoryResult] = await Promise.allSettled([
+    const [healthResult, userResult, groupResult, inventoryResult] = await Promise.allSettled([
       fetchHealth(apiBase),
+      fetchUsers(apiBase),
+      fetchNetworkGroups(apiBase),
       fetchVms(apiBase),
     ]);
 
@@ -616,6 +693,18 @@ export default function App() {
       setHealth({ state: 'ok', message: 'API reachable' });
     } else {
       setHealth({ state: 'error', message: healthResult.reason.message });
+    }
+
+    if (userResult.status === 'fulfilled') {
+      setUsers(userResult.value.users || []);
+    } else {
+      showMessage(userResult.reason.message, 'error');
+    }
+
+    if (groupResult.status === 'fulfilled') {
+      setNetworkGroups(groupResult.value.networkGroups || []);
+    } else {
+      showMessage(groupResult.reason.message, 'error');
     }
 
     if (inventoryResult.status === 'fulfilled') {
@@ -692,27 +781,44 @@ export default function App() {
    * @returns {Promise<void>} Resolves after the request and follow-up refresh finish.
    */
   async function handleFormSubmit(mode) {
-    if (!draftPayload) {
-      showMessage(draftPayloadError || 'Form data is not valid yet.', 'warning');
-      return;
-    }
-
     setSubmitState(mode);
     try {
-      let response;
-      if (formMode === 'clone') {
-        response = await cloneVm(apiBase, cloneSourceVmName, draftPayload);
-      } else {
-        response = mode === 'create'
-          ? await createVm(apiBase, draftPayload)
-          : await saveVmConfig(apiBase, draftPayload);
+      let effectiveFormState = formState;
+      if (formState.networkGroupId === '__new__') {
+        const nextNetworkGroupName = formState.newNetworkGroupName.trim();
+        if (!formState.ownerUserId || !nextNetworkGroupName) {
+          throw new Error('Select an owner and provide a new network group name first.');
+        }
+
+        const createdGroup = await createNetworkGroup(apiBase, {
+          ownerUserId: formState.ownerUserId,
+          name: nextNetworkGroupName,
+          profile: formState.newNetworkGroupProfile,
+        });
+        const nextNetworkGroup = createdGroup.networkGroup;
+        setNetworkGroups((current) => [...current, nextNetworkGroup]);
+        effectiveFormState = {
+          ...formState,
+          networkGroupId: nextNetworkGroup.id,
+        };
       }
 
-      const nextVmName = response.vmName || draftPayload.config.vm.name;
+      const preparedPayload = buildVmPayload(effectiveFormState);
+
+      let response;
+      if (formMode === 'clone') {
+        response = await cloneVm(apiBase, cloneSourceVmName, preparedPayload);
+      } else {
+        response = mode === 'create'
+          ? await createVm(apiBase, preparedPayload)
+          : await saveVmConfig(apiBase, preparedPayload);
+      }
+
+      const nextVmName = response.vmName || preparedPayload.config.vm.name;
       setCreateDialogOpen(false);
       setFormMode('create');
       setCloneSourceVmName('');
-      setFormState(createDefaultFormState());
+      setFormState(createMetadataAwareFormState());
       showMessage(
         formMode === 'clone'
           ? `Cloned ${cloneSourceVmName} to ${nextVmName}.`
@@ -798,10 +904,20 @@ export default function App() {
       return;
     }
 
+    if (!selectedVm?.exists) {
+      showMessage('Full VM clones require a live source VM disk.', 'warning');
+      return;
+    }
+
     const suggestedCloneName = buildUniqueCloneName(selectedVmName, knownVmNames);
     setFormMode('clone');
     setCloneSourceVmName(selectedVmName);
-    setFormState(buildCloneFormState(clonableConfig, suggestedCloneName));
+    setFormState((current) => ({
+      ...createMetadataAwareFormState(),
+      ...buildCloneFormState(clonableConfig, suggestedCloneName),
+      ownerUserId: clonableConfig?.vm?.owner_user_id || current.ownerUserId || users[0]?.id || '',
+      networkGroupId: clonableConfig?.vm?.network_group_id || '',
+    }));
     setCreateDialogOpen(true);
   }
 
@@ -813,7 +929,7 @@ export default function App() {
   function openCreateDialog() {
     setFormMode('create');
     setCloneSourceVmName('');
-    setFormState(createDefaultFormState());
+    setFormState(createMetadataAwareFormState());
     setCreateDialogOpen(true);
   }
 
@@ -864,7 +980,31 @@ export default function App() {
   }
 
   /**
-   * Create a restore point for the selected VM.
+   * Update one or more saved per-VM network policy flags.
+   *
+   * @param {object} patch - Partial policy update.
+   * @returns {Promise<void>} Resolves after the API save and refresh complete.
+   */
+  async function handleUpdateVmPolicy(patch) {
+    if (!selectedVmName) {
+      return;
+    }
+
+    setVmActionState('policy');
+    try {
+      await updateVmPolicy(apiBase, selectedVmName, patch);
+      showMessage(`Updated network policy for ${selectedVmName}.`, 'success');
+      await refreshInventory(selectedVmName);
+      await loadVmDetails(selectedVmName);
+    } catch (error) {
+      showMessage(error.message, 'error');
+    } finally {
+      setVmActionState('idle');
+    }
+  }
+
+  /**
+   * Create a snapshot for the selected VM.
    *
    * @returns {Promise<void>} Resolves after snapshot creation and refresh complete.
    */
@@ -876,7 +1016,7 @@ export default function App() {
     setVmActionState('snapshot-create');
     try {
       await createVmSnapshot(apiBase, selectedVmName);
-      showMessage(`Created a restore point for ${selectedVmName}.`, 'success');
+      showMessage(`Created a snapshot for ${selectedVmName}.`, 'success');
       await refreshInventory(selectedVmName);
       await loadVmDetails(selectedVmName);
     } catch (error) {
@@ -887,7 +1027,7 @@ export default function App() {
   }
 
   /**
-   * Restore the selected VM from a restore point.
+   * Restore the selected VM from a snapshot.
    *
    * @param {string} snapshotId - Snapshot identifier.
    * @returns {Promise<void>} Resolves after restore and refresh complete.
@@ -898,7 +1038,7 @@ export default function App() {
     }
 
     const confirmed = window.confirm(
-      `Restore ${selectedVmName} to ${snapshotId}? The VM will be stopped and left powered off after the restore.`,
+      `Restore ${selectedVmName} from snapshot ${snapshotId}? The VM will be stopped and left powered off after the restore.`,
     );
     if (!confirmed) {
       return;
@@ -907,7 +1047,7 @@ export default function App() {
     setVmActionState(`snapshot-restore:${snapshotId}`);
     try {
       await restoreVmSnapshot(apiBase, selectedVmName, snapshotId);
-      showMessage(`Restored ${selectedVmName} from ${snapshotId}.`, 'success');
+      showMessage(`Restored ${selectedVmName} from snapshot ${snapshotId}.`, 'success');
       await refreshInventory(selectedVmName);
       await loadVmDetails(selectedVmName);
       await loadSnapshot(selectedVmName);
@@ -919,7 +1059,7 @@ export default function App() {
   }
 
   /**
-   * Delete a restore point.
+   * Delete a snapshot.
    *
    * @param {string} snapshotId - Snapshot identifier.
    * @returns {Promise<void>} Resolves after deletion and refresh complete.
@@ -929,7 +1069,7 @@ export default function App() {
       return;
     }
 
-    const confirmed = window.confirm(`Delete restore point ${snapshotId} for ${selectedVmName}?`);
+    const confirmed = window.confirm(`Delete snapshot ${snapshotId} for ${selectedVmName}?`);
     if (!confirmed) {
       return;
     }
@@ -937,7 +1077,7 @@ export default function App() {
     setVmActionState(`snapshot-delete:${snapshotId}`);
     try {
       await deleteVmSnapshot(apiBase, selectedVmName, snapshotId);
-      showMessage(`Deleted restore point ${snapshotId}.`, 'success');
+      showMessage(`Deleted snapshot ${snapshotId}.`, 'success');
       await refreshInventory(selectedVmName);
       await loadVmDetails(selectedVmName);
     } catch (error) {
@@ -950,6 +1090,34 @@ export default function App() {
   useEffect(() => {
     void refreshInventory();
   }, [apiBase]);
+
+  useEffect(() => {
+    if (!createDialogOpen) {
+      return;
+    }
+
+    if (!formState.ownerUserId && users.length > 0) {
+      const nextOwnerUserId = users[0].id;
+      const nextNetworkGroupId = networkGroups.find((group) => group.owner_user_id === nextOwnerUserId)?.id || '';
+      setFormState((current) => ({
+        ...current,
+        ownerUserId: nextOwnerUserId,
+        networkGroupId: current.networkGroupId || nextNetworkGroupId,
+      }));
+      return;
+    }
+
+    if (
+      formState.ownerUserId
+      && formState.networkGroupId !== '__new__'
+      && !ownerScopedNetworkGroups.some((group) => group.id === formState.networkGroupId)
+    ) {
+      setFormState((current) => ({
+        ...current,
+        networkGroupId: ownerScopedNetworkGroups[0]?.id || '',
+      }));
+    }
+  }, [createDialogOpen, formState.ownerUserId, formState.networkGroupId, networkGroups, ownerScopedNetworkGroups, users]);
 
   useEffect(() => {
     setDetailTab(0);
@@ -1147,7 +1315,7 @@ export default function App() {
                   <Box>
                     <Typography variant="h6">VM inventory</Typography>
                     <Typography variant="body2" color="text.secondary">
-                      Search by name, status, address, trust, or network mode.
+                      Search by name, status, address, trust, network group, or network profile.
                     </Typography>
                   </Box>
                   {inventoryLoading ? <CircularProgress size={20} /> : null}
@@ -1250,87 +1418,135 @@ export default function App() {
                         {selectedVm?.configured ? (
                           <Chip variant="outlined" color="secondary" label="Config persisted" />
                         ) : null}
+                        {selectedVmNetworkGroup ? (
+                          <Chip variant="outlined" label={selectedVmNetworkGroup.name} />
+                        ) : null}
                       </Stack>
                       <Typography variant="body1" color="text.secondary" sx={{ mt: 1 }}>
                         {selectedVm?.ip_address || 'No live IP reported'} •{' '}
-                        {selectedVm?.network?.mode || 'No network mode reported'}
+                        {selectedVm?.network?.profile || selectedVm?.network?.mode || 'No network profile reported'}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
+                        Owner: {selectedVmOwner?.username || selectedVm?.owner_user_id || 'unknown'} • MAC:{' '}
+                        {selectedVm?.mac_address || selectedVm?.network?.mac || 'Unavailable'}
                       </Typography>
                     </Box>
-                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                      {canCloneConfig ? (
-                        <Button
-                          variant="outlined"
-                          color="secondary"
-                          startIcon={<ContentCopyRoundedIcon />}
-                          disabled={vmActionState !== 'idle'}
-                          onClick={openCloneDialog}
-                        >
-                          Clone VM
-                        </Button>
-                      ) : null}
-                      {selectedVm?.exists && String(selectedVm?.status).toLowerCase() !== 'running' ? (
-                        <Button
-                          variant="contained"
-                          startIcon={<PlayArrowRoundedIcon />}
-                          disabled={vmActionState !== 'idle'}
-                          onClick={() => void handleStartVm()}
-                        >
-                          {vmActionState === 'start' ? 'Starting…' : 'Start'}
-                        </Button>
-                      ) : null}
-                      {selectedVm?.exists && String(selectedVm?.status).toLowerCase() === 'running' ? (
-                        <Button
-                          variant="outlined"
-                          color="warning"
-                          startIcon={<StopRoundedIcon />}
-                          disabled={vmActionState !== 'idle'}
-                          onClick={() => void handleStopVm()}
-                        >
-                          {vmActionState === 'stop' ? 'Stopping…' : 'Stop'}
-                        </Button>
-                      ) : null}
-                      {selectedVm?.exists ? (
-                        <Button
-                          variant="outlined"
-                          startIcon={<BackupRoundedIcon />}
-                          disabled={vmActionState !== 'idle'}
-                          onClick={() => void handleCreateRestorePoint()}
-                        >
-                          {vmActionState === 'snapshot-create' ? 'Saving…' : 'Create restore point'}
-                        </Button>
-                      ) : null}
-                      {canProvisionStoredConfig ? (
-                        <Button
-                          variant="contained"
-                          color="secondary"
-                          startIcon={<RocketLaunchRoundedIcon />}
-                          disabled={vmActionState !== 'idle'}
-                          onClick={() => void handleProvisionStoredConfig()}
-                        >
-                          {vmActionState === 'provision' ? 'Provisioning…' : 'Provision saved config'}
-                        </Button>
-                      ) : null}
-                      <Button
-                        variant="outlined"
-                        startIcon={<RefreshRoundedIcon />}
-                        disabled={vmActionState !== 'idle'}
-                        onClick={async () => {
-                          await refreshInventory(selectedVmName);
-                          await loadVmDetails(selectedVmName);
-                          await loadSnapshot(selectedVmName);
+                    <Stack spacing={1.25} alignItems={{ xs: 'stretch', md: 'flex-end' }}>
+                      <Box
+                        sx={{
+                          px: 1.5,
+                          py: 1.25,
+                          borderRadius: 2.5,
+                          border: (theme) => `1px solid ${alpha(theme.palette.common.white, 0.08)}`,
+                          backgroundColor: (theme) => alpha(theme.palette.common.white, 0.03),
                         }}
                       >
-                        Refresh
-                      </Button>
-                      <Button
-                        variant="outlined"
-                        color="error"
-                        startIcon={<DeleteOutlineRoundedIcon />}
-                        disabled={vmActionState !== 'idle' || !selectedVm?.exists}
-                        onClick={() => void handleDestroyVm()}
-                      >
-                        {vmActionState === 'destroy' ? 'Destroying…' : 'Destroy VM'}
-                      </Button>
+                        <Stack
+                          direction={{ xs: 'column', sm: 'row' }}
+                          spacing={1.25}
+                          justifyContent="space-between"
+                          alignItems={{ xs: 'stretch', sm: 'center' }}
+                        >
+                          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+                            <Typography variant="body2" color="text.secondary">
+                              Power controls
+                            </Typography>
+                            <Chip size="small" color={powerStateColor} label={powerStateLabel} />
+                          </Stack>
+                          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                            <Button
+                              variant="contained"
+                              startIcon={<PlayArrowRoundedIcon />}
+                              disabled={vmActionState !== 'idle' || !canStartSelectedVm}
+                              onClick={() => void handleStartVm()}
+                            >
+                              {vmActionState === 'start' ? 'Starting…' : 'Start'}
+                            </Button>
+                            <Button
+                              variant="outlined"
+                              color="warning"
+                              startIcon={<StopRoundedIcon />}
+                              disabled={vmActionState !== 'idle' || !canStopSelectedVm}
+                              onClick={() => void handleStopVm()}
+                            >
+                              {vmActionState === 'stop' ? 'Stopping…' : 'Stop'}
+                            </Button>
+                          </Stack>
+                        </Stack>
+                      </Box>
+                      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                        {hasClonableConfig ? (
+                          <Tooltip
+                            title={
+                              canCloneVm
+                                ? 'Create a full VM clone from the source disk.'
+                                : 'Full VM clones require a live source VM disk.'
+                            }
+                          >
+                            <span>
+                              <Button
+                                variant="outlined"
+                                color="secondary"
+                                startIcon={<ContentCopyRoundedIcon />}
+                                disabled={vmActionState !== 'idle' || !canCloneVm}
+                                onClick={openCloneDialog}
+                              >
+                                Full Clone
+                              </Button>
+                            </span>
+                          </Tooltip>
+                        ) : null}
+                        <Tooltip
+                          title={
+                            canCreateSnapshot
+                              ? 'Capture a reusable VM snapshot.'
+                              : 'Snapshots require a provisioned VM disk.'
+                          }
+                        >
+                          <span>
+                            <Button
+                              variant="outlined"
+                              startIcon={<BackupRoundedIcon />}
+                              disabled={vmActionState !== 'idle' || !canCreateSnapshot}
+                              onClick={() => void handleCreateRestorePoint()}
+                            >
+                              {vmActionState === 'snapshot-create' ? 'Saving…' : 'Create Snapshot'}
+                            </Button>
+                          </span>
+                        </Tooltip>
+                        {canProvisionStoredConfig ? (
+                          <Button
+                            variant="contained"
+                            color="secondary"
+                            startIcon={<RocketLaunchRoundedIcon />}
+                            disabled={vmActionState !== 'idle'}
+                            onClick={() => void handleProvisionStoredConfig()}
+                          >
+                            {vmActionState === 'provision' ? 'Provisioning…' : 'Provision saved config'}
+                          </Button>
+                        ) : null}
+                        <Button
+                          variant="outlined"
+                          startIcon={<RefreshRoundedIcon />}
+                          disabled={vmActionState !== 'idle'}
+                          onClick={async () => {
+                            await refreshInventory(selectedVmName);
+                            await loadVmDetails(selectedVmName);
+                            await loadSnapshot(selectedVmName);
+                          }}
+                        >
+                          Refresh
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          color="error"
+                          startIcon={<DeleteOutlineRoundedIcon />}
+                          disabled={vmActionState !== 'idle' || !selectedVm?.exists}
+                          onClick={() => void handleDestroyVm()}
+                        >
+                          {vmActionState === 'destroy' ? 'Destroying…' : 'Destroy VM'}
+                        </Button>
+                      </Stack>
                     </Stack>
                   </Stack>
 
@@ -1387,7 +1603,7 @@ export default function App() {
                   <Tabs value={detailTab} onChange={(_event, nextValue) => setDetailTab(nextValue)}>
                     <Tab label="Overview" />
                     <Tab label="Config" />
-                    <Tab label="Restore Points" />
+                    <Tab label={snapshots.length > 0 ? `Snapshots (${snapshots.length})` : 'Snapshots'} />
                     <Tab label="Logs" />
                   </Tabs>
 
@@ -1423,6 +1639,12 @@ export default function App() {
                         <Stack spacing={1.5}>
                           <Typography variant="h6">Network + ports</Typography>
                           <Typography variant="body2" color="text.secondary">
+                            Network group: {selectedVmNetworkGroup?.name || selectedVm?.network?.group_name || selectedVm?.network_group_id || 'Unavailable'}
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary">
+                            Subnet: {selectedVm?.network?.subnet_cidr || selectedVm?.network?.cidr || 'Unavailable'}
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary">
                             Network: {selectedVm?.network?.name || 'Unavailable'}
                           </Typography>
                           <Typography variant="body2" color="text.secondary">
@@ -1439,6 +1661,73 @@ export default function App() {
                               ? formatJson(selectedVm.ports)
                               : 'No forwarded ports configured.'}
                           </Box>
+                        </Stack>
+                      </Paper>
+                      <Paper sx={{ p: 2.5 }}>
+                        <Stack spacing={1.5}>
+                          <Typography variant="h6">Group Isolation</Typography>
+                          <Typography variant="body2" color="text.secondary">
+                            Owner: {selectedVmOwner?.username || selectedVm?.owner_user_id || 'unknown'}
+                          </Typography>
+                          <FormControlLabel
+                            control={
+                              <Switch
+                                checked={selectedVm?.allow_same_group_traffic !== false}
+                                disabled={vmActionState !== 'idle'}
+                                onChange={(event) =>
+                                  void handleUpdateVmPolicy({
+                                    allow_same_group_traffic: event.target.checked,
+                                  })
+                                }
+                              />
+                            }
+                            label="Allow same network-group traffic"
+                          />
+                          <FormControlLabel
+                            control={
+                              <Switch
+                                checked={selectedVm?.internet_access !== false}
+                                disabled={vmActionState !== 'idle'}
+                                onChange={(event) =>
+                                  void handleUpdateVmPolicy({
+                                    internet_access: event.target.checked,
+                                  })
+                                }
+                              />
+                            }
+                            label="Allow internet access"
+                          />
+                          <FormControlLabel
+                            control={
+                              <Switch
+                                checked={selectedVm?.allow_host_access !== false}
+                                disabled={vmActionState !== 'idle'}
+                                onChange={(event) =>
+                                  void handleUpdateVmPolicy({
+                                    allow_host_access: event.target.checked,
+                                  })
+                                }
+                              />
+                            }
+                            label="Allow hypervisor host access"
+                          />
+                          <FormControlLabel
+                            control={
+                              <Switch
+                                checked={Boolean(selectedVm?.allow_private_lan_access)}
+                                disabled={
+                                  vmActionState !== 'idle'
+                                  || (selectedVmOwner?.role || '') !== 'admin'
+                                }
+                                onChange={(event) =>
+                                  void handleUpdateVmPolicy({
+                                    allow_private_lan_access: event.target.checked,
+                                  })
+                                }
+                              />
+                            }
+                            label="Allow private LAN access"
+                          />
                         </Stack>
                       </Paper>
                       <JsonPanel
@@ -1486,25 +1775,40 @@ export default function App() {
                             spacing={2}
                           >
                             <Box>
-                              <Typography variant="h6">Restore points</Typography>
+                              <Typography variant="h6">Snapshots</Typography>
                               <Typography variant="body2" color="text.secondary">
-                                Snapshots copy the VM disk plus saved config-side assets so you can roll back to a known host state.
+                                Snapshots capture the VM disk plus saved config-side assets so you can restore the machine to a known host state.
                               </Typography>
                             </Box>
-                            <Button
-                              variant="outlined"
-                              startIcon={<BackupRoundedIcon />}
-                              disabled={vmActionState !== 'idle' || !selectedVm?.exists}
-                              onClick={() => void handleCreateRestorePoint()}
+                            <Tooltip
+                              title={
+                                canCreateSnapshot
+                                  ? 'Capture a reusable VM snapshot.'
+                                  : 'Snapshots require a provisioned VM disk.'
+                              }
                             >
-                              {vmActionState === 'snapshot-create' ? 'Saving…' : 'Create restore point'}
-                            </Button>
+                              <span>
+                                <Button
+                                  variant="outlined"
+                                  startIcon={<BackupRoundedIcon />}
+                                  disabled={vmActionState !== 'idle' || !canCreateSnapshot}
+                                  onClick={() => void handleCreateRestorePoint()}
+                                >
+                                  {vmActionState === 'snapshot-create' ? 'Saving…' : 'Create Snapshot'}
+                                </Button>
+                              </span>
+                            </Tooltip>
                           </Stack>
-                          {restorePoints.length === 0 ? (
-                            <Alert severity="info">No restore points have been created for this VM yet.</Alert>
+                          {!selectedVm?.exists ? (
+                            <Alert severity="info">
+                              Provision this VM before taking a snapshot. Any existing snapshots for this VM will still appear here.
+                            </Alert>
+                          ) : null}
+                          {snapshots.length === 0 ? (
+                            <Alert severity="info">No snapshots have been created for this VM yet.</Alert>
                           ) : (
                             <List sx={{ p: 0 }}>
-                              {restorePoints.map((snapshot) => (
+                              {snapshots.map((snapshot) => (
                                 <ListItemButton
                                   key={snapshot.snapshot_id}
                                   disableRipple
@@ -1676,17 +1980,23 @@ export default function App() {
             setCreateDialogOpen(false);
             setFormMode('create');
             setCloneSourceVmName('');
+            setFormState(createMetadataAwareFormState());
           }
         }}
         fullWidth
         maxWidth="lg"
       >
-        <DialogTitle>{formMode === 'clone' ? 'Clone a VM' : 'Create or save a VM definition'}</DialogTitle>
+        <DialogTitle>{formMode === 'clone' ? 'Create a Full VM Clone' : 'Create or save a VM definition'}</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={3} sx={{ pt: 1 }}>
             {formMode === 'clone' ? (
               <Alert severity="info">
-                This clone uses the source disk from <strong>{cloneSourceVmName}</strong>. The network settings and tenant SSH key inputs were intentionally cleared so the new VM does not reuse the source IP/MAC identity or access key material.
+                This creates a full VM clone from <strong>{cloneSourceVmName}</strong>. A unique target name is prefilled, and the forwarded-port plus tenant SSH key inputs were cleared so the clone does not silently reuse the source runtime identity.
+              </Alert>
+            ) : null}
+            {formMode === 'clone' ? (
+              <Alert severity="warning">
+                Review the target name, networking, host port forwards, and tenant access settings before submitting the clone.
               </Alert>
             ) : null}
             {formMode === 'clone' ? (
@@ -1704,14 +2014,88 @@ export default function App() {
               }}
             >
               <TextField
-                label="VM name"
+                select
+                label="Owner"
+                value={formState.ownerUserId}
+                onChange={(event) => {
+                  const nextOwnerUserId = event.target.value;
+                  const nextNetworkGroupId = networkGroups.find(
+                    (group) => group.owner_user_id === nextOwnerUserId,
+                  )?.id || '';
+                  setFormState((current) => ({
+                    ...current,
+                    ownerUserId: nextOwnerUserId,
+                    networkGroupId: nextNetworkGroupId,
+                    newNetworkGroupName: '',
+                  }));
+                }}
+              >
+                {users.map((user) => (
+                  <MenuItem key={user.id} value={user.id}>
+                    {user.username} ({user.role})
+                  </MenuItem>
+                ))}
+              </TextField>
+              <TextField
+                select
+                label="Network group"
+                value={formState.networkGroupId}
+                onChange={(event) => setFormState((current) => ({ ...current, networkGroupId: event.target.value }))}
+                helperText="One libvirt network is shared by all VMs in the same group."
+              >
+                {ownerScopedNetworkGroups.map((group) => (
+                  <MenuItem key={group.id} value={group.id}>
+                    {group.name} ({group.profile})
+                  </MenuItem>
+                ))}
+                <MenuItem value="__new__">Create a new network group</MenuItem>
+              </TextField>
+              {formState.networkGroupId === '__new__' ? (
+                <TextField
+                  label="New network group name"
+                  value={formState.newNetworkGroupName}
+                  onChange={(event) => setFormState((current) => ({
+                    ...current,
+                    newNetworkGroupName: event.target.value,
+                  }))}
+                />
+              ) : (
+                <TextField
+                  label="Assigned group subnet"
+                  value={ownerScopedNetworkGroups.find((group) => group.id === formState.networkGroupId)?.subnet_cidr || 'Assigned by API'}
+                  InputProps={{ readOnly: true }}
+                />
+              )}
+              {formState.networkGroupId === '__new__' ? (
+                <TextField
+                  select
+                  label="New group profile"
+                  value={formState.newNetworkGroupProfile}
+                  onChange={(event) => setFormState((current) => ({
+                    ...current,
+                    newNetworkGroupProfile: event.target.value,
+                  }))}
+                  helperText="`isolated_nat` is the recommended default for tenant isolation."
+                >
+                  <MenuItem value="private">private</MenuItem>
+                  <MenuItem value="nat">nat</MenuItem>
+                  <MenuItem value="isolated_nat">isolated_nat</MenuItem>
+                  <MenuItem value="bridged">bridged</MenuItem>
+                </TextField>
+              ) : null}
+              <TextField
+                autoFocus={formMode === 'clone'}
+                label={formMode === 'clone' ? 'Target VM name' : 'VM name'}
                 value={formState.name}
                 onChange={(event) => setFormState((current) => ({ ...current, name: event.target.value }))}
+                inputProps={{ maxLength: MAX_VM_NAME_LENGTH }}
                 error={Boolean(normalizedDraftVmName && knownVmNames.has(normalizedDraftVmName))}
                 helperText={
                   normalizedDraftVmName && knownVmNames.has(normalizedDraftVmName)
                     ? 'VM name must be unique.'
-                    : `${MAX_VM_NAME_LENGTH} characters max.`
+                    : formMode === 'clone'
+                      ? `Choose a unique name for the cloned VM. ${MAX_VM_NAME_LENGTH} characters max.`
+                      : `${MAX_VM_NAME_LENGTH} characters max.`
                 }
               />
               <TextField
@@ -1746,45 +2130,75 @@ export default function App() {
                 value={formState.diskGb}
                 onChange={(event) => setFormState((current) => ({ ...current, diskGb: event.target.value }))}
               />
-              <TextField
-                select
-                label="Network mode"
-                value={formState.networkMode}
-                onChange={(event) => setFormState((current) => ({ ...current, networkMode: event.target.value }))}
-              >
-                <MenuItem value="nat-auto">nat-auto</MenuItem>
-                <MenuItem value="nat-custom">nat-custom</MenuItem>
-                <MenuItem value="bridge">bridge</MenuItem>
-              </TextField>
-              <TextField
-                label={formState.networkMode === 'bridge' ? 'Bridge name' : 'Subnet prefix'}
-                value={formState.networkMode === 'bridge' ? formState.bridgeName : formState.subnetPrefix}
-                onChange={(event) =>
-                  setFormState((current) =>
-                    current.networkMode === 'bridge'
-                      ? { ...current, bridgeName: event.target.value }
-                      : { ...current, subnetPrefix: event.target.value },
-                  )
-                }
-                helperText={
-                  formState.networkMode === 'bridge'
-                    ? 'Used only for bridge networking.'
-                    : 'Used only for nat-custom. Example: 192.168.240'
-                }
-              />
             </Box>
 
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={formState.allowSudo}
-                  onChange={(event) =>
-                    setFormState((current) => ({ ...current, allowSudo: event.target.checked }))
-                  }
-                />
-              }
-              label="Grant passwordless sudo to the tenant user"
-            />
+            <Box
+              sx={{
+                display: 'grid',
+                gap: 1,
+                gridTemplateColumns: { xs: '1fr', md: 'repeat(2, 1fr)' },
+              }}
+            >
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={formState.allowSudo}
+                    onChange={(event) =>
+                      setFormState((current) => ({ ...current, allowSudo: event.target.checked }))
+                    }
+                  />
+                }
+                label="Grant passwordless sudo to the tenant user"
+              />
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={formState.allowSameGroupTraffic}
+                    onChange={(event) =>
+                      setFormState((current) => ({ ...current, allowSameGroupTraffic: event.target.checked }))
+                    }
+                  />
+                }
+                label="Allow same-group VM traffic"
+              />
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={formState.internetAccess}
+                    onChange={(event) =>
+                      setFormState((current) => ({ ...current, internetAccess: event.target.checked }))
+                    }
+                  />
+                }
+                label="Allow internet access"
+              />
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={formState.allowHostAccess}
+                    onChange={(event) =>
+                      setFormState((current) => ({ ...current, allowHostAccess: event.target.checked }))
+                    }
+                  />
+                }
+                label="Allow host access"
+              />
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={formState.allowPrivateLanAccess}
+                    disabled={(users.find((user) => user.id === formState.ownerUserId)?.role || '') !== 'admin'}
+                    onChange={(event) =>
+                      setFormState((current) => ({
+                        ...current,
+                        allowPrivateLanAccess: event.target.checked,
+                      }))
+                    }
+                  />
+                }
+                label="Allow private LAN access (admin only)"
+              />
+            </Box>
 
             <Divider />
 
@@ -1819,7 +2233,11 @@ export default function App() {
                 label="Forwarded ports"
                 value={formState.portsText}
                 onChange={(event) => setFormState((current) => ({ ...current, portsText: event.target.value }))}
-                helperText="One per line. Example: 2222:22/tcp"
+                helperText={
+                  formMode === 'clone'
+                    ? 'One per line. Review host ports before cloning to avoid collisions. Example: 2222:22/tcp'
+                    : 'One per line. Example: 2222:22/tcp'
+                }
               />
               <TextField
                 multiline
@@ -1829,7 +2247,11 @@ export default function App() {
                 onChange={(event) =>
                   setFormState((current) => ({ ...current, sshPublicKey: event.target.value }))
                 }
-                helperText="When provided, the API stores the key under the provisioner user-keys directory and rewrites vm.ssh_key_file automatically."
+                helperText={
+                  formMode === 'clone'
+                    ? 'Optional. Provide a new tenant SSH key for the clone. When provided, the API stores the key under the provisioner user-keys directory and rewrites vm.ssh_key_file automatically.'
+                    : 'When provided, the API stores the key under the provisioner user-keys directory and rewrites vm.ssh_key_file automatically.'
+                }
               />
               <TextField
                 multiline
@@ -1837,7 +2259,11 @@ export default function App() {
                 label="Existing absolute SSH key path"
                 value={formState.sshKeyFile}
                 onChange={(event) => setFormState((current) => ({ ...current, sshKeyFile: event.target.value }))}
-                helperText="Use this only when you are not submitting sshPublicKey."
+                helperText={
+                  formMode === 'clone'
+                    ? 'Optional. Point the clone at a different tenant key path when you are not submitting sshPublicKey.'
+                    : 'Use this only when you are not submitting sshPublicKey.'
+                }
               />
               <TextField
                 multiline
@@ -1845,7 +2271,11 @@ export default function App() {
                 label="Post-cloud-init setup script"
                 value={formState.setupScript}
                 onChange={(event) => setFormState((current) => ({ ...current, setupScript: event.target.value }))}
-                helperText="Optional shell script content to run after the built-in cloud-init commands finish."
+                helperText={
+                  formMode === 'clone'
+                    ? 'Optional. Review whether the source setup script still applies to the clone.'
+                    : 'Optional shell script content to run after the built-in cloud-init commands finish.'
+                }
               />
               <TextField
                 multiline
@@ -1853,7 +2283,11 @@ export default function App() {
                 label="Existing absolute setup script path"
                 value={formState.setupScriptFile}
                 onChange={(event) => setFormState((current) => ({ ...current, setupScriptFile: event.target.value }))}
-                helperText="Use this only when you are not submitting setupScript content."
+                helperText={
+                  formMode === 'clone'
+                    ? 'Optional. Review whether the source setup script path should be reused for the clone.'
+                    : 'Use this only when you are not submitting setupScript content.'
+                }
               />
             </Box>
 
@@ -1873,13 +2307,14 @@ export default function App() {
                 setCreateDialogOpen(false);
                 setFormMode('create');
                 setCloneSourceVmName('');
+                setFormState(createMetadataAwareFormState());
               }
             }}
           >
             Cancel
           </Button>
           {formMode === 'clone' ? (
-            <Tooltip title="Save the cloned config and create the new VM from the source disk.">
+            <Tooltip title="Save the cloned config and create a full VM clone from the source disk.">
               <span>
                 <Button
                   variant="contained"
@@ -1888,7 +2323,7 @@ export default function App() {
                   disabled={submitState !== 'idle' || !draftPayload}
                   onClick={() => void handleFormSubmit('clone')}
                 >
-                  {submitState === 'clone' ? 'Cloning…' : 'Clone VM'}
+                  {submitState === 'clone' ? 'Cloning…' : 'Create Full Clone'}
                 </Button>
               </span>
             </Tooltip>
