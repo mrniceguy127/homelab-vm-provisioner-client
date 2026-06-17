@@ -18,7 +18,7 @@ This is **not** a runtime container - it's solely for generating static files th
 
 ```bash
 # From workspace root - builds only static files with Docker
-./scripts/build-client-docker
+./homelab-vm-provisioner-client/build
 
 # Or as part of full build
 ./build --docker

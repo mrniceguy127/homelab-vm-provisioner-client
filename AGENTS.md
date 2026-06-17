@@ -5,6 +5,9 @@ React + Vite frontend for VM management with Material-UI.
 ## Quick Start
 
 ```bash
+# From this directory
+./setup              # Install system packages (Node.js 18+) + npm packages + Playwright
+./setup --skip-system-packages  # Skip system packages (assume already installed)
 npm test && npm run test:e2e  # Lint + unit + E2E tests
 npm run lint                   # ESLint only  
 npm run dev                   # Start dev server
@@ -12,13 +15,36 @@ npm run coverage              # Lint + generate coverage report
 npm run docs:build            # Build JSDoc docs
 ```
 
+## Configuration
+
+Copy `.env.example` to `.env` if you need component-specific variables:
+
+```bash
+cp .env.example .env
+# Currently no client-specific variables required
+```
+
+**Note**: When called from parent scripts, this component inherits workspace `.env` variables. This component's `.env` overrides those inherited values. Variables not set here remain inherited from parent.
+
+## System Requirements
+
+**Installed by `./setup` (can be skipped with `--skip-system-packages`):**
+- git
+- curl
+- Node.js 18+ (from NodeSource on Ubuntu/Debian/RHEL)
+- npm
+
+**Supported distributions:** Ubuntu/Debian, Fedora, RHEL/Rocky/AlmaLinux, Arch Linux
+
 ## Docker Build
 
 Build static files in a container (see [DOCKER.md](DOCKER.md)):
 
+**Prerequisites**: Docker must be installed (Docker Desktop on macOS/Windows, or Docker Engine on Linux). This is your responsibility.
+
 ```bash
 # From workspace root
-./scripts/build-client-docker         # Build only client with Docker
+./homelab-vm-provisioner-client/build         # Build only client with Docker
 ./build --docker       # Full build with Docker for client
 
 # Manual Docker
