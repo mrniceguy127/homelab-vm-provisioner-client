@@ -2,7 +2,7 @@
 
 React + Material UI client for `homelab-vm-provisioner-api`.
 
-When this repository is checked out as part of the full `homelab-vm-provisioner-webapp` workspace, prefer the workspace root `setup`, `build`, and `start` scripts for end-to-end setup and local runs.
+When this repository is checked out as part of the full `homelab-vm-provisioner` workspace, prefer the workspace root `setup`, `build`, and `start` scripts for end-to-end setup and local runs.
 
 ## Features
 
