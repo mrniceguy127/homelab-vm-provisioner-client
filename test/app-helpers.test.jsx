@@ -3,11 +3,20 @@ import { expect, test } from 'vitest';
 import {
   buildCloneFormState,
   buildClonedConfig,
+  buildFormStateFromConfig,
+  buildStatusDescriptor,
   buildUniqueCloneName,
   buildVmPayload,
   createDefaultFormState,
+  escapeRegExp,
+  formatJson,
+  formatNetworkSummary,
+  isVmRunning,
+  normalizeVmName,
+  parseCommaSeparatedList,
   parseLineCount,
   parsePortRules,
+  parsePositiveInteger,
 } from '../src/App.jsx';
 
 test('parsePortRules supports proto suffixes and defaults to tcp', () => {
@@ -116,4 +125,152 @@ test('buildVmPayload creates the expected API request shape', () => {
     sshPublicKey: 'ssh-ed25519 AAAATEST user@example',
     setupScript: '#!/bin/sh\necho ready',
   });
+});
+
+test('parsePositiveInteger validates and parses integer values', () => {
+  expect(parsePositiveInteger('100', 'test')).toBe(100);
+  expect(parsePositiveInteger('5', 'test')).toBe(5);
+  expect(() => parsePositiveInteger('0', 'test')).toThrow('must be a positive integer');
+  expect(() => parsePositiveInteger('-5', 'test')).toThrow('must be a positive integer');
+  expect(() => parsePositiveInteger('abc', 'test')).toThrow('must be a positive integer');
+});
+
+test('parseCommaSeparatedList splits and trims values', () => {
+  expect(parseCommaSeparatedList('a, b, c')).toEqual(['a', 'b', 'c']);
+  expect(parseCommaSeparatedList('one,two,three')).toEqual(['one', 'two', 'three']);
+  expect(parseCommaSeparatedList('  spaced  ,  items  ')).toEqual(['spaced', 'items']);
+  expect(parseCommaSeparatedList('')).toEqual([]);
+  expect(parseCommaSeparatedList('single')).toEqual(['single']);
+});
+
+test('normalizeVmName converts to lowercase and trims', () => {
+  expect(normalizeVmName('MyVM')).toBe('myvm');
+  expect(normalizeVmName('  devbox  ')).toBe('devbox');
+  expect(normalizeVmName('Test-123')).toBe('test-123');
+});
+
+test('escapeRegExp escapes special regex characters', () => {
+  expect(escapeRegExp('a.b*c?')).toBe('a\\.b\\*c\\?');
+  expect(escapeRegExp('[test]')).toBe('\\[test\\]');
+  expect(escapeRegExp('(hello)')).toBe('\\(hello\\)');
+});
+
+test('buildFormStateFromConfig maps config to form state', () => {
+  const config = {
+    vm: {
+      name: 'testvm',
+      user: 'testuser',
+      ram_mb: 8192,
+      vcpus: 4,
+      disk_gb: 80,
+      allow_sudo: true,
+      trust: 'trusted',
+      owner_user_id: 'user-1',
+      network_group_id: 'ng-1',
+      allow_same_group_traffic: false,
+      allow_host_access: false,
+      allow_private_lan_access: true,
+      internet_access: false,
+    },
+    packages: ['git', 'curl'],
+    dns: { resolvers: ['8.8.8.8', '8.8.4.4'] },
+    ports: [{ host: 2222, guest: 22, proto: 'tcp' }],
+  };
+
+  const formState = buildFormStateFromConfig(config);
+
+  expect(formState.name).toBe('testvm');
+  expect(formState.user).toBe('testuser');
+  expect(formState.ramMb).toBe('8192');
+  expect(formState.vcpus).toBe('4');
+  expect(formState.diskGb).toBe('80');
+  expect(formState.allowSudo).toBe(true);
+  expect(formState.trust).toBe('trusted');
+  expect(formState.ownerUserId).toBe('user-1');
+  expect(formState.networkGroupId).toBe('ng-1');
+  expect(formState.allowSameGroupTraffic).toBe(false);
+  expect(formState.allowHostAccess).toBe(false);
+  expect(formState.allowPrivateLanAccess).toBe(true);
+  expect(formState.internetAccess).toBe(false);
+  expect(formState.packagesText).toBe('git, curl');
+  expect(formState.dnsResolversText).toBe('8.8.8.8, 8.8.4.4');
+  expect(formState.portsText).toBe('2222:22/tcp');
+});
+
+test('buildStatusDescriptor returns correct status info', () => {
+  expect(buildStatusDescriptor({ status: 'running', exists: true })).toEqual({
+    label: 'Running',
+    color: 'success',
+  });
+  
+  expect(buildStatusDescriptor({ status: 'shut off', exists: true })).toEqual({
+    label: 'shut off',
+    color: 'warning',
+  });
+  
+  expect(buildStatusDescriptor({ status: 'paused', exists: true })).toEqual({
+    label: 'paused',
+    color: 'warning',
+  });
+  
+  expect(buildStatusDescriptor({ status: 'unknown', exists: false, configured: true })).toEqual({
+    label: 'Config only',
+    color: 'secondary',
+  });
+  
+  expect(buildStatusDescriptor({ status: 'crashed', exists: true })).toEqual({
+    label: 'crashed',
+    color: 'warning',
+  });
+});
+
+test('isVmRunning checks if VM is running', () => {
+  expect(isVmRunning({ status: 'running', exists: true })).toBe(true);
+  expect(isVmRunning({ status: 'shut off', exists: true })).toBe(false);
+  expect(isVmRunning({ status: 'paused', exists: true })).toBe(false);
+  expect(isVmRunning({ status: 'unknown', exists: false })).toBe(false);
+});
+
+test('formatJson formats JavaScript objects as JSON', () => {
+  expect(formatJson({ name: 'test', count: 42 })).toBe('{\n  "name": "test",\n  "count": 42\n}');
+  expect(formatJson(null)).toBe('{}');
+  expect(formatJson(undefined)).toBe('{}');
+  expect(formatJson(['a', 'b', 'c'])).toContain('"a"');
+});
+
+test('formatNetworkSummary formats network information', () => {
+  const vm = {
+    network: {
+      profile: 'isolated_nat',
+      subnet_cidr: '10.80.0.0/28',
+      vm_ip: '10.80.0.2',
+      mac: '52:54:00:11:22:33',
+    },
+  };
+  
+  const summary = formatNetworkSummary(vm);
+  
+  expect(summary).toContain('isolated_nat');
+  expect(summary).toContain('10.80.0.2');
+});
+
+test('formatNetworkSummary handles missing network data', () => {
+  expect(formatNetworkSummary({ network: null })).toBe('No discovered network');
+  expect(formatNetworkSummary({})).toBe('No discovered network');
+});
+
+test('createDefaultFormState returns default values', () => {
+  const defaults = createDefaultFormState();
+  
+  expect(defaults.name).toBe('');
+  expect(defaults.user).toBe('');
+  expect(defaults.ramMb).toBe('4096');
+  expect(defaults.vcpus).toBe('2');
+  expect(defaults.diskGb).toBe('40');
+  expect(defaults.allowSudo).toBe(true);
+  expect(defaults.trust).toBe('untrusted');
+  expect(defaults.allowSameGroupTraffic).toBe(true);
+  expect(defaults.allowHostAccess).toBe(true);
+  expect(defaults.allowPrivateLanAccess).toBe(false);
+  expect(defaults.internetAccess).toBe(true);
 });
