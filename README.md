@@ -2,7 +2,7 @@
 
 React + Material UI client for `homelab-vm-provisioner-api`.
 
-When this repository is checked out as part of the full `homelab-vm-provisioner-webapp` workspace, prefer the workspace root `setup`, `build`, and `start` scripts for end-to-end setup and local runs.
+When this repository is checked out as part of the full `homelab-vm-provisioner` workspace, prefer the workspace root `setup`, `build`, and `start` scripts for end-to-end setup and local runs.
 
 ## Features
 
@@ -40,7 +40,7 @@ If you did not clone the full workspace with submodules, initialize them first:
 git submodule update --init --recursive
 ```
 
-For the full workspace setup, including Python provisioner setup, API packages, client packages, client build, and deployment of the built client into the API's `public/` directory, run this from the workspace root:
+For the full workspace setup, including Python provisioner setup, API packages, and client packages, run this from the workspace root:
 
 ```bash
 ./setup
@@ -52,35 +52,62 @@ If system packages are already installed on the host, run:
 ./setup --skip-system-packages
 ```
 
-For a repeatable rebuild after dependencies are already installed, run:
+After setup completes, build the workspace:
 
 ```bash
 ./build
 ```
 
-`npm run build` in this repository builds only the client app, tests, coverage, and generated docs. The root `./build` script also runs the API build and deploys the client bundle into `homelab-vm-provisioner-api/public/`.
+For a rebuild after dependencies are already installed:
 
+```bash
+./build
+```
+
+`npm run build` in this repository builds the client app and documentation (no tests). The root `./build` script also runs the API build and deploys the client bundle into `homelab-vm-provisioner-proxy/public/`.
+
+For tests, use `./test-all` from the workspace root or `npm test` / `npm run test:e2e` from this directory.
+### Docker Build
+
+You can also build static files using Docker:
+
+```bash
+# From the client directory
+docker build -t homelab-vm-provisioner-client-builder .
+
+# Extract files (or use the root ./scripts/build-client-docker script)
+CONTAINER_ID=$(docker create homelab-vm-provisioner-client-builder)
+docker cp "$CONTAINER_ID:/app/dist/." ../homelab-vm-provisioner-proxy/public/
+docker rm "$CONTAINER_ID"
+```
+
+The Dockerfile creates an ephemeral build container that:
+1. Installs dependencies
+2. Builds static files with Vite
+3. Exits after completion
+
+This is useful for CI/CD pipelines or environments where you want isolated builds.
 ## Run
 
 ```bash
 npm run dev
 ```
 
-The client expects the API to be running separately, typically at `http://localhost:3000`.
+The client expects the API to be running separately, typically at `http://localhost:3001`.
 
 When using the full workspace, the usual split-dev flow is:
 
 1. Start the API from the workspace root with `./start`
 2. Start the client dev server in this repository with `npm run dev`
 
-By default, the Vite dev server proxies these paths to `http://localhost:3000`:
+By default, the Vite dev server proxies these paths to `http://localhost:3001`:
 
 - `/health`
 - `/api/*`
 
-That means the API can stay on port `3000` while the client runs on `5173` without changing the UI configuration.
+That means the API can stay on port `3001` while the client runs on `5173` without changing the UI configuration.
 
-For production-style local use, the built client bundle is served directly by the API after the root `./setup` or `./build` script deploys it into `homelab-vm-provisioner-api/public/`.
+For production-style local use, the built client bundle is served directly by the reverse proxy after the root `./build` script deploys it into `homelab-vm-provisioner-proxy/public/`.
 
 ## API Base URL
 
@@ -92,7 +119,7 @@ The UI includes an API base URL field.
 You can also preconfigure it with:
 
 ```bash
-VITE_API_BASE_URL=http://localhost:3000
+VITE_API_BASE_URL=http://localhost:3001
 ```
 
 ## Notes
@@ -112,12 +139,22 @@ VITE_API_BASE_URL=http://localhost:3000
 
 ## Developer Commands
 
+**Build** (app + docs, no tests):
 ```bash
-npm test
-npm run coverage
-npm run test:e2e
+npm run build         # Build app and docs
+npm run build:app     # Build app only
+```
+
+**Test**:
+```bash
+npm test              # Lint + unit tests
+npm run coverage      # Lint + tests + coverage report
+npm run test:e2e      # Playwright E2E tests
+```
+
+**Docs**:
+```bash
 npm run docs:build
-npm run build
 ```
 
 Helper scripts mirroring the provisioner workflow are also available:

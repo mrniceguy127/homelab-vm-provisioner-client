@@ -1,10 +1,11 @@
 node_modules/
 dist/
-.build/
 coverage/
-docs/_build/
+.vite/
 playwright-report/
 test-results/
-.env
+docs/_build/
+*.log
+.DS_Store
 .env.local
-npm-debug.log*
+.env.*.local

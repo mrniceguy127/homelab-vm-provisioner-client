@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+CLIENT_DIR="$SCRIPT_DIR"
+PROXY_PUBLIC_DIR="$WORKSPACE_ROOT/homelab-vm-provisioner-proxy/public"
+
+# Source component .env (parent vars inherited through execution sequence)
+if [[ -f "$SCRIPT_DIR/.env" ]]; then
+    set -a
+    source "$SCRIPT_DIR/.env"
+    set +a
+fi
+
+log() {
+    printf '==> %s\n' "$*"
+}
+
+log "Building client static files with Docker"
+
+# Build Docker image
+docker build -t homelab-vm-provisioner-client-builder "$CLIENT_DIR"
+
+# Create temporary container
+CONTAINER_ID=$(docker create homelab-vm-provisioner-client-builder)
+
+# Extract built files
+rm -rf "$PROXY_PUBLIC_DIR"
+mkdir -p "$PROXY_PUBLIC_DIR"
+docker cp "$CONTAINER_ID:/app/dist/." "$PROXY_PUBLIC_DIR/"
+
+# Clean up container (image remains for caching)
+docker rm "$CONTAINER_ID"
+
+log "Client static files built and deployed from Docker"
+log "Files are in: $PROXY_PUBLIC_DIR"
