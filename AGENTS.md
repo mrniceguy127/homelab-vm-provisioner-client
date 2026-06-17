@@ -12,6 +12,22 @@ npm run coverage              # Lint + generate coverage report
 npm run docs:build            # Build JSDoc docs
 ```
 
+## Docker Build
+
+Build static files in a container (see [DOCKER.md](DOCKER.md)):
+
+```bash
+# From workspace root
+./scripts/build-client-docker         # Build only client with Docker
+./build --docker       # Full build with Docker for client
+
+# Manual Docker
+docker build -t homelab-vm-provisioner-client-builder .
+CONTAINER_ID=$(docker create homelab-vm-provisioner-client-builder)
+docker cp "$CONTAINER_ID:/app/dist/." ../homelab-vm-provisioner-proxy/public/
+docker rm "$CONTAINER_ID"
+```
+
 ## Project Structure
 
 ```
