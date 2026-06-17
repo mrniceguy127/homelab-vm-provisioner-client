@@ -5,9 +5,10 @@ React + Vite frontend for VM management with Material-UI.
 ## Quick Start
 
 ```bash
-npm test && npm run test:e2e  # Unit + E2E tests
+npm test && npm run test:e2e  # Lint + unit + E2E tests
+npm run lint                   # ESLint only  
 npm run dev                   # Start dev server
-npm run coverage              # Generate coverage report
+npm run coverage              # Lint + generate coverage report
 npm run docs:build            # Build JSDoc docs
 ```
 
@@ -36,6 +37,7 @@ tests/e2e/
 **UI Library**: Material-UI (MUI)  
 **Testing**: vitest + @testing-library/react + Playwright  
 **Styling**: Emotion (via MUI)  
+**Linting**: ESLint with React plugins (required before tests run)  
 **Docs**: JSDoc
 
 **Key Patterns**:
