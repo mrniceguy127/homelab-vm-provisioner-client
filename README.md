@@ -66,7 +66,7 @@ For a rebuild after dependencies are already installed:
 
 `npm run build` in this repository builds the client app and documentation (no tests). The root `./build` script also runs the API build and deploys the client bundle into `homelab-vm-provisioner-proxy/public/`.
 
-For tests, use `./test-all` from the workspace root or `npm test` / `npm run test:e2e` from this directory.
+For tests, use `./test` from the workspace root or `npm test` / `npm run test:e2e` from this directory.
 ### Docker Build
 
 You can also build static files using Docker:
