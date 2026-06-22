@@ -141,7 +141,13 @@ test('renders the configured inventory and exposes the provision action', async 
   stubClientApi();
   renderApp();
 
-  expect(await screen.findByRole('button', { name: /provision saved config/i })).toBeInTheDocument();
+  // Navigate to VMs tab (index 1)
+  const user = userEvent.setup();
+  const vmsTab = await screen.findByRole('tab', { name: /runtime vms/i });
+  await user.click(vmsTab);
+
+  // Look for provision button with updated text
+  expect(await screen.findByRole('button', { name: /provision from template/i })).toBeInTheDocument();
 });
 
 test('opens the full clone dialog with a suggested unique name and cleared conflict-prone fields', async () => {
@@ -172,6 +178,10 @@ test('opens the full clone dialog with a suggested unique name and cleared confl
   }));
   renderApp();
 
+  // Navigate to VMs tab first
+  const vmsTab = await screen.findByRole('tab', { name: /runtime vms/i });
+  await user.click(vmsTab);
+
   await waitFor(() => {
     expect(screen.getByRole('button', { name: /full clone/i })).toBeEnabled();
   });
@@ -200,6 +210,10 @@ test('shows snapshots tab contents and stable start stop controls for a live VM'
     ],
   }));
   renderApp();
+
+  // Navigate to VMs tab first
+  const vmsTab = await screen.findByRole('tab', { name: /runtime vms/i });
+  await user.click(vmsTab);
 
   expect(await screen.findByRole('button', { name: /^start$/i })).toBeDisabled();
   await waitFor(() => {

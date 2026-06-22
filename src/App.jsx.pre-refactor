@@ -52,7 +52,6 @@ import {
   createVmSnapshot,
   deleteVmSnapshot,
   destroyVm,
-  fetchConfigs,
   fetchHealth,
   fetchNetworkGroups,
   fetchUsers,
@@ -66,8 +65,6 @@ import {
   stopVm,
   updateVmPolicy,
 } from './api.js';
-
-import VMStateDetail from './VMStateDetail.jsx';
 
 export const MAX_VM_NAME_LENGTH = 63;
 
@@ -563,14 +560,12 @@ export function JsonPanel({ title, subtitle, value }) {
 export default function App() {
   const defaultApiBase = import.meta.env.VITE_API_BASE_URL || '';
 
-  const [mainTab, setMainTab] = useState(0); // 0=Configs, 1=VMs, 2=Users, 3=Networks
   const [apiBaseInput, setApiBaseInput] = useState(defaultApiBase);
   const [apiBase, setApiBase] = useState(defaultApiBase);
   const [health, setHealth] = useState({ state: 'checking', message: 'Checking API' });
   const [users, setUsers] = useState([]);
   const [networkGroups, setNetworkGroups] = useState([]);
-  const [configs, setConfigs] = useState([]); // VM definitions/templates
-  const [vms, setVms] = useState([]); // Runtime VMs with state
+  const [vms, setVms] = useState([]);
   const [selectedVmName, setSelectedVmName] = useState('');
   const [selectedVm, setSelectedVm] = useState(null);
   const [inventoryLoading, setInventoryLoading] = useState(true);
@@ -687,11 +682,10 @@ export default function App() {
     setInventoryLoading(true);
     setHealth({ state: 'checking', message: 'Checking API' });
 
-    const [healthResult, userResult, groupResult, configsResult, inventoryResult] = await Promise.allSettled([
+    const [healthResult, userResult, groupResult, inventoryResult] = await Promise.allSettled([
       fetchHealth(apiBase),
       fetchUsers(apiBase),
       fetchNetworkGroups(apiBase),
-      fetchConfigs(apiBase),
       fetchVms(apiBase),
     ]);
 
@@ -711,12 +705,6 @@ export default function App() {
       setNetworkGroups(groupResult.value.networkGroups || []);
     } else {
       showMessage(groupResult.reason.message, 'error');
-    }
-
-    if (configsResult.status === 'fulfilled') {
-      setConfigs(configsResult.value.configs || []);
-    } else {
-      showMessage(configsResult.reason.message, 'error');
     }
 
     if (inventoryResult.status === 'fulfilled') {
@@ -836,7 +824,7 @@ export default function App() {
           ? `Cloned ${cloneSourceVmName} to ${nextVmName}.`
           : mode === 'create'
             ? `Provisioned ${nextVmName}.`
-            : `Saved template for ${nextVmName}.`,
+            : `Saved config for ${nextVmName}.`,
         'success',
       );
       await refreshInventory(nextVmName);
@@ -859,7 +847,7 @@ export default function App() {
     }
 
     const confirmed = window.confirm(
-      `Destroy ${selectedVmName}? The saved template will be kept.`,
+      `Destroy ${selectedVmName}? The saved config in the provisioner configs directory will be kept.`,
     );
     if (!confirmed) {
       return;
@@ -881,20 +869,20 @@ export default function App() {
   }
 
   /**
-   * Provision the selected saved template into a live VM.
+   * Provision the selected saved config into a live VM.
    *
    * @returns {Promise<void>} Resolves after provisioning and refresh complete.
    */
   async function handleProvisionStoredConfig() {
     if (!selectedVmName || !selectedVm?.configured) {
-      showMessage('No saved template is available to provision.', 'warning');
+      showMessage('No saved config is available to provision.', 'warning');
       return;
     }
 
     setVmActionState('provision');
     try {
       await provisionSavedVm(apiBase, selectedVmName);
-      showMessage(`Provisioned ${selectedVmName} from its saved template.`, 'success');
+      showMessage(`Provisioned ${selectedVmName} from its saved config.`, 'success');
       await refreshInventory(selectedVmName);
       await loadVmDetails(selectedVmName);
       await loadSnapshot(selectedVmName);
@@ -1219,8 +1207,8 @@ export default function App() {
                     An elegant dark console for provisioning and operating VMs.
                   </Typography>
                   <Typography variant="body1" color="text.secondary" sx={{ mt: 1.5, maxWidth: 640 }}>
-                    Manage VM templates, inspect runtime VMs, follow libvirt logs live,
-                    and control your infrastructure without leaving the browser.
+                    Create or save machine configs, inspect provisioner state, follow libvirt logs live,
+                    and tear down VMs without leaving the browser.
                   </Typography>
                 </Box>
 
@@ -1288,7 +1276,7 @@ export default function App() {
                 <MetricCard
                   title="Total inventory"
                   value={vms.length}
-                  caption="Merged view of templates and active VMs."
+                  caption="Merged view of saved configs and provisioner-visible machines."
                   icon={<DnsRoundedIcon />}
                 />
                 <MetricCard
@@ -1298,9 +1286,9 @@ export default function App() {
                   icon={<RocketLaunchRoundedIcon />}
                 />
                 <MetricCard
-                  title="Saved templates"
+                  title="Saved definitions"
                   value={configuredCount}
-                  caption="VM templates available for provisioning on any host."
+                  caption="VM configs retained for later reprovisioning or review."
                   icon={<SaveRoundedIcon />}
                 />
                 <MetricCard
@@ -1313,94 +1301,6 @@ export default function App() {
             </Stack>
           </Paper>
 
-          {/* Main Navigation Tabs */}
-          <Paper sx={{ borderBottom: 1, borderColor: 'divider' }}>
-            <Tabs
-              value={mainTab}
-              onChange={(_event, nextValue) => setMainTab(nextValue)}
-              aria-label="Main navigation tabs"
-            >
-              <Tab label="VM Templates" />
-              <Tab label="Runtime VMs" />
-              <Tab label="Users" />
-              <Tab label="Networks" />
-            </Tabs>
-          </Paper>
-
-          {/* Tab 0: VM Templates (Configs) */}
-          {mainTab === 0 && (
-            <Box
-              sx={{
-                display: 'grid',
-                gap: 3,
-                alignItems: 'start',
-                gridTemplateColumns: { xs: '1fr', xl: '360px minmax(0, 1fr)' },
-              }}
-            >
-              <Paper sx={{ p: 2.5 }}>
-                <Stack spacing={2}>
-                  <Stack direction="row" justifyContent="space-between" alignItems="center">
-                    <Box>
-                      <Typography variant="h6">VM Templates</Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        VM definitions that follow your user account across all hosts.
-                      </Typography>
-                    </Box>
-                    {inventoryLoading ? <CircularProgress size={20} /> : null}
-                  </Stack>
-
-                  <TextField
-                    size="small"
-                    placeholder="Search templates"
-                    value={searchText}
-                    onChange={(event) => setSearchText(event.target.value)}
-                    InputProps={{
-                      startAdornment: (
-                        <InputAdornment position="start">
-                          <SearchRoundedIcon fontSize="small" />
-                        </InputAdornment>
-                      ),
-                    }}
-                  />
-
-                  <List sx={{ p: 0 }}>
-                    {configs
-                      .filter((cfg) =>
-                        cfg.name?.toLowerCase().includes(searchText.toLowerCase())
-                      )
-                      .map((cfg) => (
-                        <ListItemButton
-                          key={cfg.name}
-                          onClick={() => {
-                            // TODO: Show config detail
-                            showMessage(`Selected template: ${cfg.name}`, 'info');
-                          }}
-                        >
-                          <ListItemText
-                            primary={cfg.name}
-                            secondary={`Template • ${cfg.trust || 'unknown trust'}`}
-                          />
-                        </ListItemButton>
-                      ))}
-                    {configs.length === 0 && (
-                      <Alert severity="info">
-                        No VM templates found. Create a new VM to save a template.
-                      </Alert>
-                    )}
-                  </List>
-                </Stack>
-              </Paper>
-
-              <Paper sx={{ p: 2.5 }}>
-                <Alert severity="info">
-                  Select a VM template from the list to view its configuration details.
-                </Alert>
-              </Paper>
-            </Box>
-          )}
-
-          {/* Tab 1: Runtime VMs */}
-          {mainTab === 1 && (
           <Box
             sx={{
               display: 'grid',
@@ -1477,7 +1377,7 @@ export default function App() {
                               <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                                 {vm.trust ? <Chip size="small" variant="outlined" label={vm.trust} /> : null}
                                 {vm.configured ? (
-                                  <Chip size="small" variant="outlined" color="secondary" label="Template saved" />
+                                  <Chip size="small" variant="outlined" color="secondary" label="Config saved" />
                                 ) : null}
                               </Stack>
                             </Stack>
@@ -1490,7 +1390,7 @@ export default function App() {
 
                 {!inventoryLoading && filteredVms.length === 0 ? (
                   <Alert severity="info">
-                    No matching VMs yet. Create a new VM or broaden your search.
+                    No matching VMs yet. Create a new definition or broaden your search.
                   </Alert>
                 ) : null}
               </Stack>
@@ -1501,11 +1401,11 @@ export default function App() {
                 <Stack spacing={2} alignItems="flex-start">
                   <Typography variant="h5">No VM selected</Typography>
                   <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 560 }}>
-                    Create a new VM or select an existing item from the inventory to
+                    Create your first machine definition or select an existing item from the inventory to
                     inspect its live status, config, and logs.
                   </Typography>
                   <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={openCreateDialog}>
-                    Create VM
+                    Create VM Definition
                   </Button>
                 </Stack>
               ) : (
@@ -1516,7 +1416,7 @@ export default function App() {
                         <Typography variant="h4">{selectedVmName}</Typography>
                         <Chip color={selectedStatus.color} label={selectedStatus.label} />
                         {selectedVm?.configured ? (
-                          <Chip variant="outlined" color="secondary" label="Has template" />
+                          <Chip variant="outlined" color="secondary" label="Config persisted" />
                         ) : null}
                         {selectedVmNetworkGroup ? (
                           <Chip variant="outlined" label={selectedVmNetworkGroup.name} />
@@ -1622,7 +1522,7 @@ export default function App() {
                             disabled={vmActionState !== 'idle'}
                             onClick={() => void handleProvisionStoredConfig()}
                           >
-                            {vmActionState === 'provision' ? 'Provisioning…' : 'Provision from template'}
+                            {vmActionState === 'provision' ? 'Provisioning…' : 'Provision saved config'}
                           </Button>
                         ) : null}
                         <Button
@@ -1675,7 +1575,7 @@ export default function App() {
                         </Button>
                       }
                     >
-                      This entry has a saved template but no live VM. Use it to provision now.
+                      This entry has a saved config but no live VM. Use the saved definition to provision it now.
                     </Alert>
                   ) : null}
 
@@ -1705,7 +1605,6 @@ export default function App() {
                     <Tab label="Config" />
                     <Tab label={snapshots.length > 0 ? `Snapshots (${snapshots.length})` : 'Snapshots'} />
                     <Tab label="Logs" />
-                    <Tab label="VM State" />
                   </Tabs>
 
                   {detailTab === 0 ? (
@@ -2067,29 +1966,10 @@ export default function App() {
                       </Paper>
                     </Stack>
                   ) : null}
-
-                  {detailTab === 4 ? (
-                    <VMStateDetail apiBase={apiBase} vmName={selectedVmName} />
-                  ) : null}
                 </Stack>
               )}
             </Paper>
           </Box>
-          )}
-
-          {/* Tab 2: Users */}
-          {mainTab === 2 && (
-            <Alert severity="info">
-              User management interface coming soon.
-            </Alert>
-          )}
-
-          {/* Tab 3: Networks */}
-          {mainTab === 3 && (
-            <Alert severity="info">
-              Network management interface coming soon.
-            </Alert>
-          )}
         </Stack>
       </Container>
 
@@ -2106,7 +1986,7 @@ export default function App() {
         fullWidth
         maxWidth="lg"
       >
-        <DialogTitle>{formMode === 'clone' ? 'Create a Full VM Clone' : 'Create VM or Save Template'}</DialogTitle>
+        <DialogTitle>{formMode === 'clone' ? 'Create a Full VM Clone' : 'Create or save a VM definition'}</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={3} sx={{ pt: 1 }}>
             {formMode === 'clone' ? (

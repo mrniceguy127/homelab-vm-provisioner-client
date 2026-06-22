@@ -65,18 +65,6 @@ export function buildApiUrl(baseUrl, pathname, searchParams) {
 }
 
 /**
- * Build VM log stream URL for Server-Sent Events.
- *
- * @param {string} baseUrl - Optional external API base URL.
- * @param {string} vmName - VM name.
- * @param {number} lines - Number of initial lines to stream.
- * @returns {string} Stream URL.
- */
-export function buildVmLogStreamUrl(baseUrl, vmName, lines) {
-  return buildApiUrl(baseUrl, `/api/vms/${encodeURIComponent(vmName)}/logs/stream`, { lines });
-}
-
-/**
  * Issue an HTTP request and parse a JSON-style API response.
  *
  * @param {string} baseUrl - Optional external API base URL.
@@ -140,16 +128,6 @@ export function fetchNetworkGroups(baseUrl) {
 }
 
 /**
- * Fetch VM configs (definitions/templates) - these are NOT running VMs
- * 
- * @param {string} baseUrl - Optional external API base URL
- * @returns {Promise<any>} VM configs payload
- */
-export function fetchConfigs(baseUrl) {
-  return requestJson(baseUrl, '/api/configs');
-}
-
-/**
  * Create a new network group.
  *
  * @param {string} baseUrl - Optional external API base URL.
@@ -188,17 +166,6 @@ export function fetchVm(baseUrl, vmName) {
 }
 
 /**
- * Fetch VM state - combines original config + current runtime state
- * 
- * @param {string} baseUrl - Optional external API base URL
- * @param {string} vmName - VM name
- * @returns {Promise<any>} VM state payload with original_config and runtime_state
- */
-export function fetchVmState(baseUrl, vmName) {
-  return requestJson(baseUrl, `/api/vms/${encodeURIComponent(vmName)}/state`);
-}
-
-/**
  * Save a VM config without provisioning it.
  *
  * @param {string} baseUrl - Optional external API base URL.
@@ -206,7 +173,7 @@ export function fetchVmState(baseUrl, vmName) {
  * @returns {Promise<any>} Saved config payload.
  */
 export function saveVmConfig(baseUrl, payload) {
-  return requestJson(baseUrl, '/api/configs', {
+  return requestJson(baseUrl, '/api/vms/configs', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
