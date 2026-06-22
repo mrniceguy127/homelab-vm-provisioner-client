@@ -382,3 +382,26 @@ export function fetchVmLogs(baseUrl, vmName) {
 export function fetchAllVmLogs(baseUrl) {
   return requestJson(baseUrl, '/api/logs');
 }
+
+/**
+ * Fetch job details by ID
+ * 
+ * @param {string} baseUrl - Optional external API base URL
+ * @param {string|number} jobId - Job ID
+ * @returns {Promise<object>} Job details with status, type, result, error, etc.
+ */
+export function fetchJob(baseUrl, jobId) {
+  return requestJson(baseUrl, `/api/jobs/${encodeURIComponent(jobId)}`);
+}
+
+/**
+ * Fetch job events/logs by job ID
+ * 
+ * @param {string} baseUrl - Optional external API base URL
+ * @param {string|number} jobId - Job ID
+ * @param {number} [limit=100] - Maximum number of events to fetch
+ * @returns {Promise<object>} Job events with timestamps and messages
+ */
+export function fetchJobEvents(baseUrl, jobId, limit = 100) {
+  return requestJson(baseUrl, `/api/jobs/${encodeURIComponent(jobId)}/events`, {}, { limit });
+}
