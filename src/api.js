@@ -167,6 +167,33 @@ export function createNetworkGroup(baseUrl, payload) {
 }
 
 /**
+ * Validate a network group CIDR.
+ *
+ * @param {string} baseUrl - Optional external API base URL.
+ * @param {string} cidr - CIDR to validate.
+ * @returns {Promise<{valid: boolean, cidr: string, error?: string}>} Validation result.
+ */
+export function validateNetworkGroupCidr(baseUrl, cidr) {
+  return requestJson(baseUrl, '/api/network-groups/validate-cidr', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ cidr }),
+  });
+}
+
+/**
+ * Get a suggested available CIDR for a new network group.
+ *
+ * @param {string} baseUrl - Optional external API base URL.
+ * @returns {Promise<{cidr: string}>} Suggested CIDR.
+ */
+export function suggestNetworkGroupCidr(baseUrl) {
+  return requestJson(baseUrl, '/api/network-groups/suggest-cidr');
+}
+
+/**
  * Fetch the configured VM inventory.
  *
  * @param {string} baseUrl - Optional external API base URL.
@@ -212,6 +239,37 @@ export function saveVmConfig(baseUrl, payload) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * Update an existing VM config.
+ *
+ * @param {string} baseUrl - Optional external API base URL.
+ * @param {string} configName - Current config name.
+ * @param {object} payload - Updated config request payload.
+ * @returns {Promise<any>} Updated config payload.
+ */
+export function updateVmConfig(baseUrl, configName, payload) {
+  return requestJson(baseUrl, `/api/configs/${encodeURIComponent(configName)}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * Delete a VM config/template.
+ *
+ * @param {string} baseUrl - Optional external API base URL.
+ * @param {string} configName - Config name to delete.
+ * @returns {Promise<void>} Resolves when deleted.
+ */
+export function deleteVmConfig(baseUrl, configName) {
+  return requestJson(baseUrl, `/api/configs/${encodeURIComponent(configName)}`, {
+    method: 'DELETE',
   });
 }
 

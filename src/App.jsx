@@ -4,7 +4,9 @@ import BackupRoundedIcon from '@mui/icons-material/BackupRounded';
 import CloudDoneRoundedIcon from '@mui/icons-material/CloudDoneRounded';
 import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
+import DeleteRoundedIcon from '@mui/icons-material/DeleteRounded';
 import DnsRoundedIcon from '@mui/icons-material/DnsRounded';
+import EditRoundedIcon from '@mui/icons-material/EditRounded';
 import HubRoundedIcon from '@mui/icons-material/HubRounded';
 import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded';
 import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded';
@@ -14,6 +16,7 @@ import SaveRoundedIcon from '@mui/icons-material/SaveRounded';
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import StopRoundedIcon from '@mui/icons-material/StopRounded';
 import TerminalRoundedIcon from '@mui/icons-material/TerminalRounded';
+import TimelineRoundedIcon from '@mui/icons-material/TimelineRounded';
 import {
   Alert,
   Box,
@@ -50,10 +53,13 @@ import {
   createNetworkGroup,
   createVm,
   createVmSnapshot,
+  deleteVmConfig,
   deleteVmSnapshot,
   destroyVm,
   fetchConfigs,
   fetchHealth,
+  fetchJob,
+  fetchJobEvents,
   fetchNetworkGroups,
   fetchUsers,
   fetchVm,
@@ -64,7 +70,10 @@ import {
   saveVmConfig,
   startVm,
   stopVm,
+  suggestNetworkGroupCidr,
+  updateVmConfig,
   updateVmPolicy,
+  validateNetworkGroupCidr,
 } from './api.js';
 
 import VMStateDetail from './VMStateDetail.jsx';
@@ -78,9 +87,10 @@ const baseFormState = {
   networkGroupId: '',
   newNetworkGroupName: '',
   newNetworkGroupProfile: 'isolated_nat',
-  ramMb: '4096',
-  vcpus: '2',
-  diskGb: '40',
+  newNetworkGroupSubnet: '',
+  ramMb: '8192',
+  vcpus: '4',
+  diskGb: '20',
   allowSudo: true,
   allowSameGroupTraffic: true,
   allowHostAccess: true,
@@ -95,6 +105,11 @@ const baseFormState = {
   setupScript: '',
   setupScriptFile: '',
 };
+
+// Resource limits (should match backend validation)
+export const MAX_RAM_MB = 8192; // 8GB
+export const MAX_VCPUS = 4;
+export const MAX_DISK_GB = 20;
 
 /**
  * Create a fresh VM form state object.
@@ -177,6 +192,215 @@ export function parsePortRules(text) {
         proto: (match[3] || 'tcp').toLowerCase(),
       };
     });
+}
+
+/**
+ * Validate an IPv4 address format.
+ *
+ * @param {string} ip - IP address to validate.
+ * @returns {boolean} True if valid IPv4 address.
+ */
+export function isValidIPv4(ip) {
+  if (!ip || typeof ip !== 'string') {
+    return false;
+  }
+  
+  const parts = ip.trim().split('.');
+  if (parts.length !== 4) {
+    return false;
+  }
+  
+  return parts.every((part) => {
+    const num = Number.parseInt(part, 10);
+    return !Number.isNaN(num) && num >= 0 && num <= 255 && String(num) === part;
+  });
+}
+
+/**
+ * Validate DNS resolvers list.
+ *
+ * @param {string} text - Comma-separated DNS resolver IPs.
+ * @throws {Error} If any resolver is invalid.
+ */
+export function validateDnsResolvers(text) {
+  if (!text.trim()) {
+    return; // Optional field
+  }
+  
+  const resolvers = parseCommaSeparatedList(text);
+  const invalidResolvers = resolvers.filter((ip) => !isValidIPv4(ip));
+  
+  if (invalidResolvers.length > 0) {
+    throw new Error(
+      `Invalid DNS resolver IP address(es): ${invalidResolvers.join(', ')}. ` +
+      `Each resolver must be a valid IPv4 address.`
+    );
+  }
+}
+
+/**
+ * Validate port rules format.
+ *
+ * @param {string} text - Port rules text.
+ * @throws {Error} If any port rule is invalid.
+ */
+export function validatePortRules(text) {
+  if (!text.trim()) {
+    return; // Optional field
+  }
+  
+  // This will throw if any rule is invalid
+  const rules = parsePortRules(text);
+  
+  // Additional validation: check port ranges
+  rules.forEach((rule) => {
+    if (rule.host < 1 || rule.host > 65535) {
+      throw new Error(`Host port ${rule.host} is out of range (1-65535).`);
+    }
+    if (rule.guest < 1 || rule.guest > 65535) {
+      throw new Error(`Guest port ${rule.guest} is out of range (1-65535).`);
+    }
+  });
+}
+
+/**
+ * Validate a MAC address format.
+ *
+ * @param {string} mac - MAC address to validate.
+ * @returns {boolean} True if valid MAC address format.
+ */
+export function isValidMacAddress(mac) {
+  if (!mac || typeof mac !== 'string') {
+    return false;
+  }
+  
+  // Support both colon and hyphen separators
+  const macPattern = /^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/;
+  return macPattern.test(mac.trim());
+}
+
+/**
+ * Validate hostname format (RFC 1123).
+ *
+ * @param {string} hostname - Hostname to validate.
+ * @returns {boolean} True if valid hostname.
+ */
+export function isValidHostname(hostname) {
+  if (!hostname || typeof hostname !== 'string') {
+    return false;
+  }
+  
+  const trimmed = hostname.trim();
+  
+  // Length check
+  if (trimmed.length === 0 || trimmed.length > 253) {
+    return false;
+  }
+  
+  // Label pattern: alphanumeric + hyphens, cannot start/end with hyphen
+  const labelPattern = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/i;
+  const labels = trimmed.split('.');
+  
+  return labels.every((label) => labelPattern.test(label));
+}
+
+/**
+ * Validate resource limits.
+ *
+ * @param {number} ramMb - RAM in MB.
+ * @param {number} vcpus - Number of vCPUs.
+ * @param {number} diskGb - Disk size in GB.
+ * @throws {Error} If any resource exceeds limits.
+ */
+export function validateResourceLimits(ramMb, vcpus, diskGb) {
+  if (ramMb > MAX_RAM_MB) {
+    throw new Error(`RAM cannot exceed ${MAX_RAM_MB}MB (${MAX_RAM_MB / 1024}GB).`);
+  }
+  if (vcpus > MAX_VCPUS) {
+    throw new Error(`vCPUs cannot exceed ${MAX_VCPUS}.`);
+  }
+  if (diskGb > MAX_DISK_GB) {
+    throw new Error(`Disk size cannot exceed ${MAX_DISK_GB}GB.`);
+  }
+}
+
+/**
+ * Validate a stored VM config comprehensively.
+ *
+ * @param {object} config - VM configuration object.
+ * @returns {{valid: boolean, errors: string[]}} Validation result.
+ */
+export function validateStoredConfig(config) {
+  const errors = [];
+
+  if (!config || !config.vm) {
+    return { valid: false, errors: ['Invalid config structure'] };
+  }
+
+  const vm = config.vm;
+
+  // Validate required fields
+  if (!vm.name || !vm.name.trim()) {
+    errors.push('VM name is required');
+  } else if (!isValidHostname(vm.name)) {
+    errors.push('VM name must be a valid hostname');
+  }
+
+  if (!vm.user || !vm.user.trim()) {
+    errors.push('Tenant user is required');
+  }
+
+  // Validate resource limits
+  try {
+    const ramMb = parsePositiveInteger(vm.ram_mb, 'RAM');
+    const vcpus = parsePositiveInteger(vm.vcpus, 'vCPUs');
+    const diskGb = parsePositiveInteger(vm.disk_gb, 'Disk');
+    validateResourceLimits(ramMb, vcpus, diskGb);
+  } catch (error) {
+    errors.push(error.message);
+  }
+
+  // Validate DNS resolvers
+  if (config.dns?.resolvers) {
+    try {
+      const resolversText = config.dns.resolvers.join(', ');
+      validateDnsResolvers(resolversText);
+    } catch (error) {
+      errors.push(`DNS: ${error.message}`);
+    }
+  }
+
+  // Validate port rules
+  if (config.ports && config.ports.length > 0) {
+    try {
+      const portsText = config.ports
+        .map((p) => {
+          const host = p.host || p.external_port;
+          const guest = p.guest || p.internal_port;
+          const proto = p.proto || p.protocol || 'tcp';
+          return `${host}:${guest}/${proto}`;
+        })
+        .join('\n');
+      validatePortRules(portsText);
+    } catch (error) {
+      errors.push(`Ports: ${error.message}`);
+    }
+  }
+
+  // Validate MAC address if present
+  if (vm.mac_address && !isValidMacAddress(vm.mac_address)) {
+    errors.push('Invalid MAC address format');
+  }
+
+  // Validate IP address if present
+  if (vm.ip_address && !isValidIPv4(vm.ip_address)) {
+    errors.push('Invalid IP address format');
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
 }
 
 /**
@@ -338,8 +562,16 @@ export function buildVmPayload(formState) {
     trust: formState.trust,
   };
 
+  // Validate resource limits
+  validateResourceLimits(vm.ram_mb, vm.vcpus, vm.disk_gb);
+
   if (!vm.name) {
     throw new Error('VM name is required.');
+  }
+
+  // Validate hostname format
+  if (!isValidHostname(vm.name)) {
+    throw new Error('VM name must be a valid hostname (alphanumeric, hyphens, dots).');
   }
 
   if (!vm.user) {
@@ -375,11 +607,15 @@ export function buildVmPayload(formState) {
 
   const resolvers = parseCommaSeparatedList(formState.dnsResolversText);
   if (resolvers.length > 0) {
+    // Validate DNS resolvers
+    validateDnsResolvers(formState.dnsResolversText);
     config.dns = { resolvers };
   }
 
   const ports = parsePortRules(formState.portsText);
   if (ports.length > 0) {
+    // Validate port rules
+    validatePortRules(formState.portsText);
     config.ports = ports;
   }
 
@@ -592,6 +828,18 @@ export default function App() {
   const [streamError, setStreamError] = useState('');
   const [vmActionState, setVmActionState] = useState('idle');
   const [snackbar, setSnackbar] = useState({ open: false, severity: 'info', message: '' });
+  
+  // Job progress tracking
+  const [vmJobs, setVmJobs] = useState({}); // Map of vmName -> { job_id, status, type }
+  const [jobProgressOpen, setJobProgressOpen] = useState(false);
+  const [selectedJobId, setSelectedJobId] = useState(null);
+  const [jobDetails, setJobDetails] = useState(null);
+  const [jobEvents, setJobEvents] = useState([]);
+  const [jobLoading, setJobLoading] = useState(false);
+  const [subnetValidation, setSubnetValidation] = useState({ valid: null, error: '' });
+  const [subnetValidating, setSubnetValidating] = useState(false);
+  const [selectedConfigDetail, setSelectedConfigDetail] = useState(null);
+  const [configActionState, setConfigActionState] = useState('idle');
 
   const deferredSearchText = useDeferredValue(searchText);
   const knownVmNames = new Set(vms.map((vm) => normalizeVmName(vm.name)));
@@ -615,7 +863,10 @@ export default function App() {
     draftPayloadError = 'VM name must be unique. Choose a different name.';
   }
 
-  const filteredVms = vms.filter((vm) => {
+  // Filter VMs for Runtime VMs tab - only show VMs that actually exist
+  const runtimeVms = vms.filter((vm) => vm.exists === true);
+
+  const filteredVms = runtimeVms.filter((vm) => {
     const searchNeedle = deferredSearchText.trim().toLowerCase();
     if (!searchNeedle) {
       return true;
@@ -635,8 +886,13 @@ export default function App() {
       .some((value) => String(value).toLowerCase().includes(searchNeedle));
   });
 
-  const runningCount = vms.filter((vm) => String(vm.status).toLowerCase() === 'running').length;
-  const configuredCount = vms.filter((vm) => vm.configured).length;
+  // Filter configs for VM Templates tab
+  const filteredConfigs = configs.filter((cfg) =>
+    cfg.name?.toLowerCase().includes(deferredSearchText.toLowerCase())
+  );
+
+  const runningCount = runtimeVms.filter((vm) => String(vm.status).toLowerCase() === 'running').length;
+  const configuredCount = configs.length;
   const issueCount = vms.filter((vm) => vm.provisionerError || (!vm.exists && !vm.configured)).length;
   const clonableConfig = selectedVm?.storedConfig || selectedVm?.config || null;
   const provisionableConfig = selectedVm?.storedConfig || selectedVm?.config || null;
@@ -802,11 +1058,18 @@ export default function App() {
           throw new Error('Select an owner and provide a new network group name first.');
         }
 
-        const createdGroup = await createNetworkGroup(apiBase, {
+        const payload = {
           ownerUserId: formState.ownerUserId,
           name: nextNetworkGroupName,
           profile: formState.newNetworkGroupProfile,
-        });
+        };
+        
+        // Include subnet if provided
+        if (formState.newNetworkGroupSubnet.trim()) {
+          payload.subnetCidr = formState.newNetworkGroupSubnet.trim();
+        }
+
+        const createdGroup = await createNetworkGroup(apiBase, payload);
         const nextNetworkGroup = createdGroup.networkGroup;
         setNetworkGroups((current) => [...current, nextNetworkGroup]);
         effectiveFormState = {
@@ -820,6 +1083,8 @@ export default function App() {
       let response;
       if (formMode === 'clone') {
         response = await cloneVm(apiBase, cloneSourceVmName, preparedPayload);
+      } else if (formMode === 'edit') {
+        response = await updateVmConfig(apiBase, cloneSourceVmName, preparedPayload);
       } else {
         response = mode === 'create'
           ? await createVm(apiBase, preparedPayload)
@@ -827,6 +1092,20 @@ export default function App() {
       }
 
       const nextVmName = response.vmName || preparedPayload.config.vm.name;
+      
+      // Track job ID for progress monitoring
+      if (response.job_id) {
+        setVmJobs(prev => ({
+          ...prev,
+          [nextVmName]: {
+            job_id: response.job_id,
+            status: response.status || 'queued',
+            type: formMode === 'clone' ? 'clone_vm' : 'provision_vm',
+            timestamp: new Date().toISOString(),
+          }
+        }));
+      }
+      
       setCreateDialogOpen(false);
       setFormMode('create');
       setCloneSourceVmName('');
@@ -891,9 +1170,49 @@ export default function App() {
       return;
     }
 
+    // Validate the stored config before provisioning
+    try {
+      const config = selectedVm.config;
+      if (config) {
+        // Validate DNS resolvers if present
+        if (config.dns?.resolvers) {
+          const resolversText = config.dns.resolvers.join(', ');
+          validateDnsResolvers(resolversText);
+        }
+        
+        // Validate port rules if present
+        if (config.ports && config.ports.length > 0) {
+          const portsText = config.ports
+            .map((p) => `${p.host || p.external_port}:${p.guest || p.internal_port}${p.proto || p.protocol ? '/' + (p.proto || p.protocol) : ''}`)
+            .join('\n');
+          validatePortRules(portsText);
+        }
+      }
+    } catch (validationError) {
+      showMessage(
+        `Cannot provision: Invalid configuration in template. ${validationError.message}`,
+        'error'
+      );
+      return;
+    }
+
     setVmActionState('provision');
     try {
-      await provisionSavedVm(apiBase, selectedVmName);
+      const response = await provisionSavedVm(apiBase, selectedVmName);
+      
+      // Track job ID for progress monitoring
+      if (response.job_id) {
+        setVmJobs(prev => ({
+          ...prev,
+          [selectedVmName]: {
+            job_id: response.job_id,
+            status: response.status || 'queued',
+            type: 'provision_vm',
+            timestamp: new Date().toISOString(),
+          }
+        }));
+      }
+      
       showMessage(`Provisioned ${selectedVmName} from its saved template.`, 'success');
       await refreshInventory(selectedVmName);
       await loadVmDetails(selectedVmName);
@@ -903,6 +1222,134 @@ export default function App() {
     } finally {
       setVmActionState('idle');
     }
+  }
+
+  /**
+   * Open job progress dialog for a VM's latest job.
+   *
+   * @returns {Promise<void>} Resolves after loading job details.
+   */
+  async function handleOpenJobProgress() {
+    const vmJob = vmJobs[selectedVmName];
+    if (!vmJob?.job_id) {
+      showMessage('No job found for this VM.', 'warning');
+      return;
+    }
+
+    setSelectedJobId(vmJob.job_id);
+    setJobProgressOpen(true);
+    await loadJobProgress(vmJob.job_id);
+  }
+
+  /**
+   * Load job details and events from API.
+   *
+   * @param {string|number} jobId - Job ID to load.
+   * @returns {Promise<void>} Resolves after loading.
+   */
+  async function loadJobProgress(jobId) {
+    setJobLoading(true);
+    try {
+      const [jobResult, eventsResult] = await Promise.all([
+        fetchJob(apiBase, jobId),
+        fetchJobEvents(apiBase, jobId, 100),
+      ]);
+      
+      setJobDetails(jobResult.job);
+      setJobEvents(eventsResult.events || []);
+      
+      // Update cached job status
+      if (selectedVmName && jobResult.job) {
+        setVmJobs(prev => {
+          const existingJob = prev[selectedVmName];
+          if (existingJob && existingJob.job_id === jobId) {
+            return {
+              ...prev,
+              [selectedVmName]: {
+                ...existingJob,
+                status: jobResult.job.status,
+              }
+            };
+          }
+          return prev;
+        });
+      }
+    } catch (error) {
+      showMessage(`Failed to load job progress: ${error.message}`, 'error');
+    } finally {
+      setJobLoading(false);
+    }
+  }
+
+  /**
+   * Close job progress dialog.
+   *
+   * @returns {void}
+   */
+  function handleCloseJobProgress() {
+    setJobProgressOpen(false);
+    setSelectedJobId(null);
+    setJobDetails(null);
+    setJobEvents([]);
+  }
+
+  /**
+   * Auto-suggest an available subnet CIDR.
+   *
+   * @returns {Promise<void>} Resolves after setting suggested CIDR.
+   */
+  async function handleSuggestSubnet() {
+    try {
+      const result = await suggestNetworkGroupCidr(apiBase);
+      setFormState((current) => ({
+        ...current,
+        newNetworkGroupSubnet: result.cidr,
+      }));
+      showMessage(`Suggested CIDR: ${result.cidr}`, 'success');
+    } catch (error) {
+      showMessage(`Failed to suggest CIDR: ${error.message}`, 'error');
+    }
+  }
+
+  /**
+   * Delete a VM template/config.
+   *
+   * @param {string} configName - Config name to delete.
+   * @returns {Promise<void>} Resolves after deletion.
+   */
+  async function handleDeleteConfig(configName) {
+    const confirmed = window.confirm(
+      `Delete template "${configName}"? This cannot be undone.`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setConfigActionState('deleting');
+    try {
+      await deleteVmConfig(apiBase, configName);
+      showMessage(`Deleted template: ${configName}`, 'success');
+      setSelectedConfigDetail(null);
+      setSelectedVmName('');
+      await refreshInventory();
+    } catch (error) {
+      showMessage(error.message, 'error');
+    } finally {
+      setConfigActionState('idle');
+    }
+  }
+
+  /**
+   * Open edit dialog for a VM template/config.
+   *
+   * @param {object} config - Config to edit.
+   */
+  function handleEditConfig(config) {
+    const formState = buildFormStateFromConfig(config);
+    setFormState(formState);
+    setFormMode('edit');
+    setCloneSourceVmName(config.vm.name); // Store original name
+    setCreateDialogOpen(true);
   }
 
   /**
@@ -1198,6 +1645,57 @@ export default function App() {
     };
   }, [apiBase, selectedVmName, streamEnabled, streamLines]);
 
+  // Auto-refresh job progress when dialog is open and job is in progress
+  useEffect(() => {
+    if (!jobProgressOpen || !selectedJobId) {
+      return undefined;
+    }
+
+    const isInProgress = jobDetails?.status === 'queued' || jobDetails?.status === 'running';
+    if (!isInProgress) {
+      return undefined;
+    }
+
+    const intervalId = setInterval(() => {
+      void loadJobProgress(selectedJobId);
+    }, 3000); // Refresh every 3 seconds
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [jobProgressOpen, selectedJobId, jobDetails?.status]);
+
+  // Debounced CIDR validation
+  useEffect(() => {
+    if (!formState.newNetworkGroupSubnet.trim() || formState.networkGroupId !== '__new__') {
+      setSubnetValidation({ valid: null, error: '' });
+      setSubnetValidating(false);
+      return undefined;
+    }
+
+    const timeoutId = setTimeout(async () => {
+      setSubnetValidating(true);
+      try {
+        const result = await validateNetworkGroupCidr(apiBase, formState.newNetworkGroupSubnet.trim());
+        setSubnetValidation({
+          valid: result.valid,
+          error: result.error || '',
+        });
+      } catch (error) {
+        setSubnetValidation({
+          valid: false,
+          error: error.message || 'Validation failed',
+        });
+      } finally {
+        setSubnetValidating(false);
+      }
+    }, 500); // 500ms debounce
+
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [apiBase, formState.newNetworkGroupSubnet, formState.networkGroupId]);
+
   const selectedStatus = buildStatusDescriptor(selectedVm);
 
   return (
@@ -1364,24 +1862,42 @@ export default function App() {
                   />
 
                   <List sx={{ p: 0 }}>
-                    {configs
-                      .filter((cfg) =>
-                        cfg.name?.toLowerCase().includes(searchText.toLowerCase())
-                      )
-                      .map((cfg) => (
+                    {filteredConfigs.map((cfg) => {
+                      const validation = validateStoredConfig(cfg);
+                      return (
                         <ListItemButton
                           key={cfg.name}
                           onClick={() => {
-                            // TODO: Show config detail
-                            showMessage(`Selected template: ${cfg.name}`, 'info');
+                            setSelectedVmName(cfg.name);
+                            setSelectedConfigDetail(cfg);
                           }}
                         >
                           <ListItemText
-                            primary={cfg.name}
-                            secondary={`Template • ${cfg.trust || 'unknown trust'}`}
+                            primary={
+                              <Stack direction="row" spacing={1} alignItems="center">
+                                <span>{cfg.name}</span>
+                                <Chip
+                                  label={validation.valid ? 'Valid' : 'Invalid'}
+                                  color={validation.valid ? 'success' : 'error'}
+                                  size="small"
+                                  sx={{ height: 20, fontSize: '0.7rem' }}
+                                />
+                              </Stack>
+                            }
+                            secondary={
+                              validation.valid
+                                ? `Template • ${cfg.trust || 'unknown trust'}`
+                                : `Template • ${validation.errors[0]}`
+                            }
                           />
                         </ListItemButton>
-                      ))}
+                      );
+                    })}
+                    {filteredConfigs.length === 0 && configs.length > 0 && (
+                      <Alert severity="info">
+                        No templates match your search.
+                      </Alert>
+                    )}
                     {configs.length === 0 && (
                       <Alert severity="info">
                         No VM templates found. Create a new VM to save a template.
@@ -1392,9 +1908,82 @@ export default function App() {
               </Paper>
 
               <Paper sx={{ p: 2.5 }}>
-                <Alert severity="info">
-                  Select a VM template from the list to view its configuration details.
-                </Alert>
+                {!selectedConfigDetail ? (
+                  <Alert severity="info">
+                    Select a VM template from the list to view its configuration details.
+                  </Alert>
+                ) : (
+                  <Stack spacing={2.5}>
+                    <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
+                      <Box>
+                        <Typography variant="h6">{selectedConfigDetail.name}</Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          VM Template Configuration
+                        </Typography>
+                      </Box>
+                      <Stack direction="row" spacing={1}>
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          startIcon={<EditRoundedIcon />}
+                          disabled={configActionState !== 'idle'}
+                          onClick={() => handleEditConfig(selectedConfigDetail)}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          color="error"
+                          startIcon={<DeleteRoundedIcon />}
+                          disabled={configActionState !== 'idle'}
+                          onClick={() => void handleDeleteConfig(selectedConfigDetail.name)}
+                        >
+                          Delete
+                        </Button>
+                      </Stack>
+                    </Stack>
+
+                    {(() => {
+                      const validation = validateStoredConfig(selectedConfigDetail);
+                      if (!validation.valid) {
+                        return (
+                          <Alert severity="error">
+                            <Typography variant="subtitle2" gutterBottom>
+                              Invalid Configuration
+                            </Typography>
+                            <Typography variant="body2" component="div">
+                              <ul style={{ margin: 0, paddingLeft: '1.2em' }}>
+                                {validation.errors.map((err, idx) => (
+                                  <li key={idx}>{err}</li>
+                                ))}
+                              </ul>
+                            </Typography>
+                          </Alert>
+                        );
+                      }
+                      return (
+                        <Alert severity="success">
+                          Configuration is valid
+                        </Alert>
+                      );
+                    })()}
+
+                    <Box>
+                      <Typography variant="body2" component="pre" sx={{ 
+                        whiteSpace: 'pre-wrap', 
+                        wordBreak: 'break-word',
+                        fontFamily: 'monospace',
+                        fontSize: '0.875rem',
+                        backgroundColor: (theme) => alpha(theme.palette.common.black, 0.2),
+                        p: 2,
+                        borderRadius: 1,
+                      }}>
+                        {JSON.stringify(selectedConfigDetail, null, 2)}
+                      </Typography>
+                    </Box>
+                  </Stack>
+                )}
               </Paper>
             </Box>
           )}
@@ -1413,9 +2002,9 @@ export default function App() {
               <Stack spacing={2}>
                 <Stack direction="row" justifyContent="space-between" alignItems="center">
                   <Box>
-                    <Typography variant="h6">VM inventory</Typography>
+                    <Typography variant="h6">Runtime VMs</Typography>
                     <Typography variant="body2" color="text.secondary">
-                      Search by name, status, address, trust, network group, or network profile.
+                      Live VM instances currently provisioned on hosts.
                     </Typography>
                   </Box>
                   {inventoryLoading ? <CircularProgress size={20} /> : null}
@@ -1423,7 +2012,7 @@ export default function App() {
 
                 <TextField
                   size="small"
-                  placeholder="Search machines"
+                  placeholder="Search runtime VMs"
                   value={searchText}
                   onChange={(event) => setSearchText(event.target.value)}
                   InputProps={{
@@ -1488,9 +2077,13 @@ export default function App() {
                   })}
                 </List>
 
-                {!inventoryLoading && filteredVms.length === 0 ? (
+                {!inventoryLoading && filteredVms.length === 0 && runtimeVms.length === 0 ? (
                   <Alert severity="info">
-                    No matching VMs yet. Create a new VM or broaden your search.
+                    No runtime VMs yet. Create and provision a VM to see it here.
+                  </Alert>
+                ) : !inventoryLoading && filteredVms.length === 0 && runtimeVms.length > 0 ? (
+                  <Alert severity="info">
+                    No VMs match your search. Try a different search term.
                   </Alert>
                 ) : null}
               </Stack>
@@ -1637,6 +2230,16 @@ export default function App() {
                         >
                           Refresh
                         </Button>
+                        {vmJobs[selectedVmName]?.job_id ? (
+                          <Button
+                            variant="outlined"
+                            color="info"
+                            startIcon={<TimelineRoundedIcon />}
+                            onClick={() => void handleOpenJobProgress()}
+                          >
+                            View Progress
+                          </Button>
+                        ) : null}
                         <Button
                           variant="outlined"
                           color="error"
@@ -2106,7 +2709,7 @@ export default function App() {
         fullWidth
         maxWidth="lg"
       >
-        <DialogTitle>{formMode === 'clone' ? 'Create a Full VM Clone' : 'Create VM or Save Template'}</DialogTitle>
+        <DialogTitle>{formMode === 'clone' ? 'Create a Full VM Clone' : formMode === 'edit' ? 'Edit VM Template' : 'Create VM or Save Template'}</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={3} sx={{ pt: 1 }}>
             {formMode === 'clone' ? (
@@ -2147,6 +2750,7 @@ export default function App() {
                     ownerUserId: nextOwnerUserId,
                     networkGroupId: nextNetworkGroupId,
                     newNetworkGroupName: '',
+                    newNetworkGroupSubnet: '',
                   }));
                 }}
               >
@@ -2187,21 +2791,56 @@ export default function App() {
                 />
               )}
               {formState.networkGroupId === '__new__' ? (
-                <TextField
-                  select
-                  label="New group profile"
-                  value={formState.newNetworkGroupProfile}
-                  onChange={(event) => setFormState((current) => ({
-                    ...current,
-                    newNetworkGroupProfile: event.target.value,
-                  }))}
-                  helperText="`isolated_nat` is the recommended default for tenant isolation."
-                >
-                  <MenuItem value="private">private</MenuItem>
-                  <MenuItem value="nat">nat</MenuItem>
-                  <MenuItem value="isolated_nat">isolated_nat</MenuItem>
-                  <MenuItem value="bridged">bridged</MenuItem>
-                </TextField>
+                <>
+                  <TextField
+                    select
+                    label="New group profile"
+                    value={formState.newNetworkGroupProfile}
+                    onChange={(event) => setFormState((current) => ({
+                      ...current,
+                      newNetworkGroupProfile: event.target.value,
+                    }))}
+                    helperText="`isolated_nat` is the recommended default for tenant isolation."
+                  >
+                    <MenuItem value="private">private</MenuItem>
+                    <MenuItem value="nat">nat</MenuItem>
+                    <MenuItem value="isolated_nat">isolated_nat</MenuItem>
+                    <MenuItem value="bridged">bridged</MenuItem>
+                  </TextField>
+                  {formState.newNetworkGroupProfile !== 'bridged' ? (
+                    <Box>
+                      <TextField
+                        label="Subnet CIDR (optional)"
+                        value={formState.newNetworkGroupSubnet}
+                        onChange={(event) => setFormState((current) => ({
+                          ...current,
+                          newNetworkGroupSubnet: event.target.value,
+                        }))}
+                        placeholder="e.g., 192.168.100.0/29"
+                        error={subnetValidation.valid === false}
+                        helperText={
+                          subnetValidating
+                            ? 'Validating...'
+                            : subnetValidation.valid === false
+                              ? subnetValidation.error
+                              : subnetValidation.valid === true
+                                ? '✓ Valid subnet'
+                                : 'Leave blank to auto-allocate. Max 8 IPs (/29 or smaller), must be within global pool (10.80.0.0/16), and not overlap existing groups.'
+                        }
+                        color={subnetValidation.valid === true ? 'success' : undefined}
+                        fullWidth
+                      />
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        onClick={() => void handleSuggestSubnet()}
+                        sx={{ mt: 1 }}
+                      >
+                        Auto-Select Available Subnet
+                      </Button>
+                    </Box>
+                  ) : null}
+                </>
               ) : null}
               <TextField
                 autoFocus={formMode === 'clone'}
@@ -2476,6 +3115,146 @@ export default function App() {
               </Tooltip>
             </>
           )}
+        </DialogActions>
+      </Dialog>
+
+      {/* Job Progress Dialog */}
+      <Dialog
+        open={jobProgressOpen}
+        onClose={handleCloseJobProgress}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>
+          <Stack direction="row" spacing={2} alignItems="center">
+            <Typography variant="h6">Job Progress</Typography>
+            {jobDetails ? (
+              <>
+                <Chip
+                  size="small"
+                  label={`#${jobDetails.id}`}
+                  variant="outlined"
+                />
+                <Chip
+                  size="small"
+                  label={jobDetails.type || 'unknown'}
+                  color="secondary"
+                />
+                <Chip
+                  size="small"
+                  label={jobDetails.status || 'unknown'}
+                  color={
+                    jobDetails.status === 'succeeded'
+                      ? 'success'
+                      : jobDetails.status === 'failed'
+                        ? 'error'
+                        : jobDetails.status === 'running'
+                          ? 'info'
+                          : 'default'
+                  }
+                />
+              </>
+            ) : null}
+          </Stack>
+        </DialogTitle>
+        <DialogContent>
+          {jobLoading && !jobDetails ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+              <CircularProgress />
+            </Box>
+          ) : jobDetails ? (
+            <Stack spacing={2.5}>
+              {jobDetails.status === 'failed' && jobDetails.error ? (
+                <Alert severity="error">
+                  <Typography variant="subtitle2">Job Failed</Typography>
+                  <Typography variant="body2">{jobDetails.error}</Typography>
+                </Alert>
+              ) : null}
+              
+              {jobDetails.status === 'succeeded' && jobDetails.result ? (
+                <Alert severity="success">
+                  <Typography variant="subtitle2">Job Succeeded</Typography>
+                  <Typography variant="body2">
+                    {jobDetails.result.message || 'Job completed successfully'}
+                  </Typography>
+                </Alert>
+              ) : null}
+
+              <Paper variant="outlined" sx={{ p: 2 }}>
+                <Typography variant="subtitle2" gutterBottom>
+                  Event Timeline
+                </Typography>
+                {jobEvents.length > 0 ? (
+                  <Stack spacing={1} sx={{ mt: 1.5 }}>
+                    {jobEvents.map((event, index) => (
+                      <Box
+                        key={event.id || index}
+                        sx={{
+                          display: 'flex',
+                          gap: 1.5,
+                          p: 1,
+                          borderRadius: 1,
+                          backgroundColor: (theme) => alpha(theme.palette.common.white, 0.02),
+                        }}
+                      >
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ minWidth: 80, fontFamily: 'monospace' }}
+                        >
+                          {new Date(event.created_at).toLocaleTimeString()}
+                        </Typography>
+                        <Chip
+                          size="small"
+                          label={event.level}
+                          color={
+                            event.level === 'error'
+                              ? 'error'
+                              : event.level === 'warning'
+                                ? 'warning'
+                                : 'default'
+                          }
+                          sx={{ minWidth: 70 }}
+                        />
+                        <Typography variant="body2" sx={{ flex: 1 }}>
+                          {event.message}
+                        </Typography>
+                      </Box>
+                    ))}
+                  </Stack>
+                ) : (
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                    No events logged yet.
+                  </Typography>
+                )}
+              </Paper>
+
+              {jobDetails.result || jobDetails.error ? (
+                <JsonPanel
+                  title={jobDetails.status === 'failed' ? 'Error Details' : 'Result Details'}
+                  subtitle="Full job result or error information"
+                  value={formatJson(jobDetails.result || jobDetails.error || {})}
+                />
+              ) : null}
+            </Stack>
+          ) : (
+            <Typography color="text.secondary">No job details available.</Typography>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 2 }}>
+          <Button onClick={handleCloseJobProgress}>Close</Button>
+          <Button
+            variant="outlined"
+            startIcon={<RefreshRoundedIcon />}
+            onClick={() => {
+              if (selectedJobId) {
+                void loadJobProgress(selectedJobId);
+              }
+            }}
+            disabled={jobLoading}
+          >
+            Refresh
+          </Button>
         </DialogActions>
       </Dialog>
 

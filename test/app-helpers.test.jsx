@@ -11,12 +11,15 @@ import {
   escapeRegExp,
   formatJson,
   formatNetworkSummary,
+  isValidIPv4,
   isVmRunning,
   normalizeVmName,
   parseCommaSeparatedList,
   parseLineCount,
   parsePortRules,
   parsePositiveInteger,
+  validateDnsResolvers,
+  validatePortRules,
 } from '../src/App.jsx';
 
 test('parsePortRules supports proto suffixes and defaults to tcp', () => {
@@ -108,9 +111,9 @@ test('buildVmPayload creates the expected API request shape', () => {
         user: 'matt',
         owner_user_id: 'user-admin',
         network_group_id: 'ng-admin',
-        ram_mb: 4096,
-        vcpus: 2,
-        disk_gb: 40,
+        ram_mb: 8192,
+        vcpus: 4,
+        disk_gb: 20,
         allow_same_group_traffic: true,
         allow_host_access: true,
         allow_private_lan_access: false,
@@ -264,13 +267,64 @@ test('createDefaultFormState returns default values', () => {
   
   expect(defaults.name).toBe('');
   expect(defaults.user).toBe('');
-  expect(defaults.ramMb).toBe('4096');
-  expect(defaults.vcpus).toBe('2');
-  expect(defaults.diskGb).toBe('40');
+  expect(defaults.ramMb).toBe('8192');
+  expect(defaults.vcpus).toBe('4');
+  expect(defaults.diskGb).toBe('20');
   expect(defaults.allowSudo).toBe(true);
   expect(defaults.trust).toBe('untrusted');
   expect(defaults.allowSameGroupTraffic).toBe(true);
   expect(defaults.allowHostAccess).toBe(true);
   expect(defaults.allowPrivateLanAccess).toBe(false);
   expect(defaults.internetAccess).toBe(true);
+});
+
+test('isValidIPv4 validates IPv4 addresses', () => {
+  expect(isValidIPv4('192.168.1.1')).toBe(true);
+  expect(isValidIPv4('10.0.0.1')).toBe(true);
+  expect(isValidIPv4('8.8.8.8')).toBe(true);
+  expect(isValidIPv4('0.0.0.0')).toBe(true);
+  expect(isValidIPv4('255.255.255.255')).toBe(true);
+
+  expect(isValidIPv4('256.1.1.1')).toBe(false);
+  expect(isValidIPv4('192.168.1')).toBe(false);
+  expect(isValidIPv4('192.168.1.1.1')).toBe(false);
+  expect(isValidIPv4('192.168.-1.1')).toBe(false);
+  expect(isValidIPv4('not.an.ip.address')).toBe(false);
+  expect(isValidIPv4('')).toBe(false);
+  expect(isValidIPv4(null)).toBe(false);
+  expect(isValidIPv4(undefined)).toBe(false);
+});
+
+test('validateDnsResolvers allows empty input', () => {
+  expect(() => validateDnsResolvers('')).not.toThrow();
+  expect(() => validateDnsResolvers('  ')).not.toThrow();
+});
+
+test('validateDnsResolvers allows valid IP addresses', () => {
+  expect(() => validateDnsResolvers('8.8.8.8')).not.toThrow();
+  expect(() => validateDnsResolvers('8.8.8.8, 1.1.1.1')).not.toThrow();
+  expect(() => validateDnsResolvers('192.168.1.1, 10.0.0.1, 8.8.4.4')).not.toThrow();
+});
+
+test('validateDnsResolvers throws on invalid IP addresses', () => {
+  expect(() => validateDnsResolvers('256.1.1.1')).toThrow(/Invalid DNS resolver/);
+  expect(() => validateDnsResolvers('8.8.8.8, invalid, 1.1.1.1')).toThrow(/invalid/);
+  expect(() => validateDnsResolvers('not-an-ip')).toThrow(/Invalid DNS resolver/);
+});
+
+test('validatePortRules allows empty input', () => {
+  expect(() => validatePortRules('')).not.toThrow();
+  expect(() => validatePortRules('  \n  ')).not.toThrow();
+});
+
+test('validatePortRules allows valid port rules', () => {
+  expect(() => validatePortRules('8080:80')).not.toThrow();
+  expect(() => validatePortRules('8080:80/tcp')).not.toThrow();
+  expect(() => validatePortRules('8080:80\n9000:9000/udp')).not.toThrow();
+});
+
+test('validatePortRules throws on invalid port rules', () => {
+  expect(() => validatePortRules('invalid')).toThrow(/Port rule/);
+  expect(() => validatePortRules('8080')).toThrow(/Port rule/);
+  expect(() => validatePortRules('8080:80\ninvalid')).toThrow(/Port rule/);
 });
