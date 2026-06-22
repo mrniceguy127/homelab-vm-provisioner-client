@@ -648,6 +648,11 @@ export function buildStatusDescriptor(vm) {
     return { label: 'No data', color: 'default' };
   }
 
+  // Destroyed VMs should not be shown
+  if (vm.status === 'destroyed') {
+    return { label: 'Destroyed', color: 'error' };
+  }
+
   if (vm.exists && String(vm.status).toLowerCase() === 'running') {
     return { label: 'Running', color: 'success' };
   }
@@ -657,7 +662,7 @@ export function buildStatusDescriptor(vm) {
   }
 
   if (vm.configured) {
-    return { label: 'Config only', color: 'secondary' };
+    return { label: 'Template only', color: 'secondary' };
   }
 
   return { label: 'Missing', color: 'default' };
@@ -863,8 +868,8 @@ export default function App() {
     draftPayloadError = 'VM name must be unique. Choose a different name.';
   }
 
-  // Filter VMs for Runtime VMs tab - only show VMs that actually exist
-  const runtimeVms = vms.filter((vm) => vm.exists === true);
+  // Filter VMs for Runtime VMs tab - only show VMs that actually exist AND are not destroyed
+  const runtimeVms = vms.filter((vm) => vm.exists === true && vm.status !== 'destroyed');
 
   const filteredVms = runtimeVms.filter((vm) => {
     const searchNeedle = deferredSearchText.trim().toLowerCase();
@@ -887,9 +892,10 @@ export default function App() {
   });
 
   // Filter configs for VM Templates tab
-  const filteredConfigs = configs.filter((cfg) =>
-    cfg.name?.toLowerCase().includes(deferredSearchText.toLowerCase())
-  );
+  const filteredConfigs = configs.filter((cfg) => {
+    const vmName = cfg.vm_name || cfg.config?.vm?.name || '';
+    return vmName.toLowerCase().includes(deferredSearchText.toLowerCase());
+  });
 
   const runningCount = runtimeVms.filter((vm) => String(vm.status).toLowerCase() === 'running').length;
   const configuredCount = configs.length;
@@ -1863,19 +1869,20 @@ export default function App() {
 
                   <List sx={{ p: 0 }}>
                     {filteredConfigs.map((cfg) => {
-                      const validation = validateStoredConfig(cfg);
+                      const vmName = cfg.vm_name || cfg.config?.vm?.name || 'unnamed';
+                      const validation = validateStoredConfig(cfg.config || cfg);
                       return (
                         <ListItemButton
-                          key={cfg.name}
+                          key={cfg.id || vmName}
                           onClick={() => {
-                            setSelectedVmName(cfg.name);
+                            setSelectedVmName(vmName);
                             setSelectedConfigDetail(cfg);
                           }}
                         >
                           <ListItemText
                             primary={
                               <Stack direction="row" spacing={1} alignItems="center">
-                                <span>{cfg.name}</span>
+                                <span>{vmName}</span>
                                 <Chip
                                   label={validation.valid ? 'Valid' : 'Invalid'}
                                   color={validation.valid ? 'success' : 'error'}
@@ -1886,7 +1893,7 @@ export default function App() {
                             }
                             secondary={
                               validation.valid
-                                ? `Template • ${cfg.trust || 'unknown trust'}`
+                                ? `Template • ${cfg.config?.vm?.trust || 'unknown trust'}`
                                 : `Template • ${validation.errors[0]}`
                             }
                           />
@@ -1916,7 +1923,7 @@ export default function App() {
                   <Stack spacing={2.5}>
                     <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
                       <Box>
-                        <Typography variant="h6">{selectedConfigDetail.name}</Typography>
+                        <Typography variant="h6">{selectedConfigDetail.vm_name || selectedConfigDetail.config?.vm?.name}</Typography>
                         <Typography variant="body2" color="text.secondary">
                           VM Template Configuration
                         </Typography>
@@ -1927,7 +1934,7 @@ export default function App() {
                           size="small"
                           startIcon={<EditRoundedIcon />}
                           disabled={configActionState !== 'idle'}
-                          onClick={() => handleEditConfig(selectedConfigDetail)}
+                          onClick={() => handleEditConfig(selectedConfigDetail.config || selectedConfigDetail)}
                         >
                           Edit
                         </Button>
@@ -1937,7 +1944,7 @@ export default function App() {
                           color="error"
                           startIcon={<DeleteRoundedIcon />}
                           disabled={configActionState !== 'idle'}
-                          onClick={() => void handleDeleteConfig(selectedConfigDetail.name)}
+                          onClick={() => void handleDeleteConfig(selectedConfigDetail.vm_name || selectedConfigDetail.config?.vm?.name)}
                         >
                           Delete
                         </Button>
@@ -1945,7 +1952,7 @@ export default function App() {
                     </Stack>
 
                     {(() => {
-                      const validation = validateStoredConfig(selectedConfigDetail);
+                      const validation = validateStoredConfig(selectedConfigDetail.config || selectedConfigDetail);
                       if (!validation.valid) {
                         return (
                           <Alert severity="error">

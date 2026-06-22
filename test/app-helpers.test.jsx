@@ -217,7 +217,7 @@ test('buildStatusDescriptor returns correct status info', () => {
   });
   
   expect(buildStatusDescriptor({ status: 'unknown', exists: false, configured: true })).toEqual({
-    label: 'Config only',
+    label: 'Template only',
     color: 'secondary',
   });
   
