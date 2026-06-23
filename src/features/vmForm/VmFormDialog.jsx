@@ -337,6 +337,11 @@ export default function VmFormDialog({
               A unique name is prefilled. You can provision or save this as a new template.
             </Alert>
           ) : null}
+          {ownerScopedNetworkGroups.length === 0 && formState.networkGroupId !== '__new__' ? (
+            <Alert severity="warning">
+              No network groups available for the selected owner. Create a network group below to continue, or switch to the Networks tab to create one first.
+            </Alert>
+          ) : null}
           <Box
             sx={{
               display: 'grid',

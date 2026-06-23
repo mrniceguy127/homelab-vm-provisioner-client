@@ -23,6 +23,7 @@ import { useVmPolling } from './hooks/useVmPolling.js';
 import AppHeader from './components/layout/AppHeader.jsx';
 import VmTemplatesPage from './features/vmTemplates/VmTemplatesPage.jsx';
 import RuntimeVmsPage from './features/runtimeVms/RuntimeVmsPage.jsx';
+import NetworkGroupsPage from './features/networkGroups/NetworkGroupsPage.jsx';
 import VmFormDialog from './features/vmForm/VmFormDialog.jsx';
 import JobProgressDialog from './features/jobs/JobProgressDialog.jsx';
 
@@ -296,7 +297,16 @@ export default function App() {
           )}
 
           {mainTab === 3 && (
-            <Alert severity="info">Network management interface coming soon.</Alert>
+            <NetworkGroupsPage
+              networkGroups={networkGroups}
+              users={users}
+              inventoryLoading={inventoryLoading}
+              searchText={searchText}
+              apiBase={apiBase}
+              onSearchChange={setSearchText}
+              onRefresh={refreshInventory}
+              showMessage={showMessage}
+            />
           )}
         </Stack>
       </Container>

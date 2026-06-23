@@ -28,6 +28,8 @@ const baseFormState = {
   sshKeyFile: '',
   setupScript: '',
   setupScriptFile: '',
+  saveAsConfig: false,
+  configDisplayName: '',
 };
 
 /**

@@ -141,7 +141,7 @@ export function buildCloneFormState(config, newVmName) {
  *
  * @param {object} formState - Current create/clone dialog form state.
  * @param {object} limits - Resource limits.
- * @returns {{config: object, sshPublicKey?: string, setupScript?: string}} Request payload.
+ * @returns {{config: object, sshPublicKey?: string, setupScript?: string, displayName?: string}} Request payload.
  */
 export function buildVmPayload(formState, limits = { maxRamMb: 8192, maxVcpus: 4, maxDiskGb: 20 }) {
   const vm = {
@@ -189,6 +189,14 @@ export function buildVmPayload(formState, limits = { maxRamMb: 8192, maxVcpus: 4
     throw new Error('New network group name is required');
   }
 
+  // Validate config display name if saveAsConfig is true
+  if (formState.saveAsConfig) {
+    const displayName = String(formState.configDisplayName || '').trim();
+    if (!displayName) {
+      throw new Error('Config display name is required when saving as a config');
+    }
+  }
+
   if (formState.allowSudo) {
     vm.allow_sudo = true;
   }
@@ -228,6 +236,11 @@ export function buildVmPayload(formState, limits = { maxRamMb: 8192, maxVcpus: 4
 
   if (formState.setupScript.trim()) {
     payload.setupScript = formState.setupScript.trim();
+  }
+
+  // Include displayName if saving as config
+  if (formState.saveAsConfig && formState.configDisplayName.trim()) {
+    payload.displayName = formState.configDisplayName.trim();
   }
 
   return payload;

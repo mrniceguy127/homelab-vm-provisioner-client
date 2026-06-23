@@ -203,6 +203,7 @@ export function suggestNetworkGroupCidr(baseUrl) {
   return requestJson(baseUrl, '/api/network-groups/suggest-cidr');
 }
 
+
 /**
  * Fetch the configured VM inventory.
  *
