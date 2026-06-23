@@ -25,9 +25,7 @@ const baseFormState = {
   dnsResolversText: '',
   portsText: '',
   sshPublicKey: '',
-  sshKeyFile: '',
   setupScript: '',
-  setupScriptFile: '',
   saveAsConfig: false,
   configDisplayName: '',
 };

@@ -231,7 +231,6 @@ test('opens the full clone dialog with a suggested unique name and cleared confl
   });
   expect(screen.getByText(/default-admin \(isolated_nat\)/i)).toBeInTheDocument();
   expect(screen.getByLabelText(/forwarded ports/i)).toHaveValue('');
-  expect(screen.getByLabelText(/existing absolute ssh key path/i)).toHaveValue('');
 });
 
 test('shows snapshots tab contents and stable start stop controls for a live VM', async () => {

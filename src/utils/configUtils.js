@@ -56,6 +56,14 @@ export function buildClonedConfig(config, newVmName) {
   delete clonedConfig.network;
   delete clonedConfig.ports;
 
+  // Remove legacy path fields that are not supported in API-managed VMs
+  if (clonedConfig.scripts?.setup_script_file) {
+    delete clonedConfig.scripts.setup_script_file;
+  }
+  if (clonedConfig.scripts && Object.keys(clonedConfig.scripts).length === 0) {
+    delete clonedConfig.scripts;
+  }
+
   if (clonedConfig.paths?.vm_data_dir) {
     if (previousVmName) {
       const trailingVmPathPattern = new RegExp(`([/\\\\])${escapeRegExp(previousVmName)}$`);
@@ -74,15 +82,6 @@ export function buildClonedConfig(config, newVmName) {
     if (Object.keys(clonedConfig.paths).length === 0) {
       delete clonedConfig.paths;
     }
-  }
-
-  if (clonedConfig.scripts?.setup_script_file) {
-    const previousPattern = escapeRegExp(previousVmName);
-    const regexp = new RegExp(previousPattern, 'g');
-    clonedConfig.scripts.setup_script_file = clonedConfig.scripts.setup_script_file.replace(
-      regexp,
-      clonedConfig.vm.name
-    );
   }
 
   return clonedConfig;
@@ -120,8 +119,6 @@ export function buildFormStateFromConfig(config) {
     portsText: ports
       .map((port) => `${port.host}:${port.guest}/${(port.proto || 'tcp').toLowerCase()}`)
       .join('\n'),
-    sshKeyFile: vm.ssh_key_file || '',
-    setupScriptFile: config?.scripts?.setup_script_file || '',
   };
 }
 
@@ -201,10 +198,6 @@ export function buildVmPayload(formState, limits = { maxRamMb: 8192, maxVcpus: 4
     vm.allow_sudo = true;
   }
 
-  if (formState.sshKeyFile.trim() && !formState.sshPublicKey.trim()) {
-    vm.ssh_key_file = formState.sshKeyFile.trim();
-  }
-
   const config = { vm };
 
   const packages = parseCommaSeparatedList(formState.packagesText);
@@ -225,13 +218,6 @@ export function buildVmPayload(formState, limits = { maxRamMb: 8192, maxVcpus: 4
   const payload = { config };
   if (formState.sshPublicKey.trim()) {
     payload.sshPublicKey = formState.sshPublicKey.trim();
-  }
-
-  if (formState.setupScriptFile.trim()) {
-    if (!config.scripts) {
-      config.scripts = {};
-    }
-    config.scripts.setup_script_file = formState.setupScriptFile.trim();
   }
 
   if (formState.setupScript.trim()) {

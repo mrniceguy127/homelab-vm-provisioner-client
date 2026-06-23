@@ -164,3 +164,206 @@ Helper scripts mirroring the provisioner workflow are also available:
 ./scripts/coverage
 ./scripts/docs-build
 ```
+
+---
+
+# UI Features
+
+## Dashboard Views
+
+### VM Inventory
+- Grid layout showing all configured VMs
+- Status chips with real-time state (running, stopped, unknown)
+- Quick actions: View Details, Start, Stop, Delete
+- Responsive Material-UI cards
+
+### VM Detail View
+- Comprehensive VM information panel
+- Live status indicator
+- Network configuration (IP, MAC, gateway, CIDR)
+- Port forwarding table
+- Admin SSH key path
+- Quick actions: Start, Stop, Clone, Delete
+- Snapshot management
+- Live log viewer
+
+### Network Management
+- User/tenant list
+- Network group list with subnet allocations
+- Create new network groups
+- View network group details (subnet, gateway, DHCP range, profile)
+
+## VM Operations
+
+### Create VM
+- Form-based VM configuration
+- Owner user and network group selection
+- Resource limits (RAM, vCPUs, disk)
+- Network policy toggles:
+  - Allow same-group traffic
+  - Allow internet access
+  - Allow hypervisor host access
+  - Allow private LAN access (admin-only)
+- SSH public key upload or paste
+- Optional setup script upload or paste
+- Package installation list
+- Port forwarding configuration
+- Trust level selection (trusted/untrusted)
+- Save config only or provision immediately
+
+### Clone VM
+- Select source VM
+- New VM name and user
+- Inherits source VM configuration
+- Sanitizes runtime fields (MAC, IP, etc.)
+- Network group assignment
+- SSH key and setup script support
+
+### Start/Stop VM
+- One-click start/stop from inventory or detail view
+- Visual feedback with loading states
+- Error handling with user-friendly messages
+
+### Delete VM
+- Confirmation dialog
+- Destroys VM but retains saved config for reprovisioning
+- Cleans up libvirt resources and state files
+
+## Snapshot Management
+
+### Create Snapshot
+- One-click snapshot creation
+- Auto-generated snapshot IDs with timestamps
+- Stores disk state and VM metadata
+
+### Restore Snapshot
+- Select from available snapshots
+- Restores VM disk and configuration
+- Reconciles networking after restore
+
+### Delete Snapshot
+- Permanently removes snapshot artifacts
+- Confirmation dialog
+
+## Log Viewing
+
+### Snapshot Logs
+- View last N lines (configurable, 200 default)
+- Displays `/var/log/libvirt/qemu/<vm>.log`
+
+### Live Log Streaming
+- Server-Sent Events (SSE) for real-time updates
+- Auto-scrolls to latest output
+- Configurable line limit (100 default)
+- Connection status indicator
+- Keep-alive messages every 15 seconds
+
+## Network Policy
+
+Per-VM firewall controls (via reconciler):
+- **Same-group traffic**: Allow/deny traffic between VMs in same network group
+- **Internet access**: Enable/disable WAN connectivity
+- **Host access**: Allow/deny traffic to hypervisor host
+- **Private LAN access**: Admin-only toggle for LAN access (untrusted VMs always blocked)
+
+Policy changes trigger network reconciliation to update nftables rules.
+
+## Material-UI Components
+
+The client uses Material-UI (MUI) v7 components:
+- `Card`, `CardContent`, `CardActions` for VM cards
+- `TextField`, `Select`, `Switch` for form inputs
+- `Button`, `IconButton` for actions
+- `Dialog`, `DialogTitle`, `DialogContent` for modals
+- `Chip` for status indicators
+- `Table`, `TableRow`, `TableCell` for data display
+- `Alert` for error messages
+- `CircularProgress` for loading states
+- `AppBar`, `Toolbar` for navigation
+
+Dark mode is enabled by default via `createTheme({ palette: { mode: 'dark' } })`.
+
+---
+
+# Project Structure
+
+```text
+src/
+├── App.jsx                # Main app component, routing
+├── main.jsx              # React entrypoint
+├── theme.js              # Material-UI theme config
+├── components/
+│   ├── Dashboard.jsx     # VM inventory grid
+│   ├── VMDetail.jsx      # VM detail view
+│   ├── CreateVMDialog.jsx    # VM creation form
+│   ├── CloneVMDialog.jsx     # VM cloning form
+│   ├── NetworkList.jsx   # Network groups list
+│   ├── UserList.jsx      # User/tenant list
+│   ├── SnapshotManager.jsx   # Snapshot operations
+│   └── LogViewer.jsx     # Log display and streaming
+├── api.js                # API client (fetch wrapper)
+├── utils.js              # Helper functions
+test/
+├── App.test.jsx          # Unit tests
+tests/
+└── e2e.spec.js           # Playwright E2E tests
+```
+
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/App.jsx` | Main router, navigation, theme provider |
+| `src/api.js` | API client with base URL handling |
+| `src/theme.js` | Dark mode Material-UI theme |
+| `src/components/Dashboard.jsx` | VM grid, status chips, quick actions |
+| `src/components/VMDetail.jsx` | Detailed VM view, operations |
+| `src/components/CreateVMDialog.jsx` | VM creation form with validation |
+| `src/components/CloneVMDialog.jsx` | VM cloning form |
+| `src/components/SnapshotManager.jsx` | Snapshot CRUD operations |
+| `src/components/LogViewer.jsx` | SSE log streaming |
+| `vite.config.js` | Vite build config, dev proxy |
+| `vitest.config.js` | Vitest test config |
+| `playwright.config.js` | Playwright E2E config |
+
+---
+
+# Testing
+
+## Unit Tests
+
+Located in `test/`:
+- Component rendering tests
+- API client tests
+- Utility function tests
+- Uses `vitest` + `@testing-library/react`
+- Requires jsdom for DOM simulation
+
+Run tests:
+```bash
+npm test
+```
+
+## E2E Tests
+
+Located in `tests/`:
+- Full user workflows
+- Uses Playwright
+- Tests against running dev server
+- Headless by default
+
+Run E2E tests:
+```bash
+npm run test:e2e
+```
+
+## Coverage
+
+Generate coverage report:
+```bash
+npm run coverage
+```
+
+Output: `.build/coverage/html/index.html`
+
+---

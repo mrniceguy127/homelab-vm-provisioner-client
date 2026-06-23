@@ -90,7 +90,6 @@ test('buildCloneFormState produces a sanitized clone form', () => {
   expect(formState.name).toBe('clonebox');
   expect(formState.networkGroupId).toBe('ng-admin');
   expect(formState.portsText).toBe('');
-  expect(formState.sshKeyFile).toBe('');
 });
 
 test('buildVmPayload creates the expected API request shape', () => {

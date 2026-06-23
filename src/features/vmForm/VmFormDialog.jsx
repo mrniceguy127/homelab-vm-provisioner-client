@@ -474,9 +474,7 @@ export default function VmFormDialog({
               dnsResolversText={formState.dnsResolversText}
               portsText={formState.portsText}
               sshPublicKey={formState.sshPublicKey}
-              sshKeyFile={formState.sshKeyFile}
               setupScript={formState.setupScript}
-              setupScriptFile={formState.setupScriptFile}
               formMode={formMode}
               onPackagesChange={(value) =>
                 setFormState((current) => ({ ...current, packagesText: value }))
@@ -490,14 +488,8 @@ export default function VmFormDialog({
               onSshPublicKeyChange={(value) =>
                 setFormState((current) => ({ ...current, sshPublicKey: value }))
               }
-              onSshKeyFileChange={(value) =>
-                setFormState((current) => ({ ...current, sshKeyFile: value }))
-              }
               onSetupScriptChange={(value) =>
                 setFormState((current) => ({ ...current, setupScript: value }))
-              }
-              onSetupScriptFileChange={(value) =>
-                setFormState((current) => ({ ...current, setupScriptFile: value }))
               }
             />
           </Box>
