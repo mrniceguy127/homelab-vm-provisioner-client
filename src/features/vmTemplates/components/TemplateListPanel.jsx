@@ -14,6 +14,7 @@ import {
 } from '@mui/material';
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import { validateStoredConfig } from '../../../utils/validationUtils.js';
+import { normalizeVmName } from '../../../utils/formUtils.js';
 
 /**
  * Template List Panel showing VM templates.
@@ -24,6 +25,7 @@ import { validateStoredConfig } from '../../../utils/validationUtils.js';
  * @param {object} props.resourceLimits - Resource limit configuration.
  * @param {boolean} props.inventoryLoading - Whether inventory is loading.
  * @param {string} props.searchText - Current search filter.
+ * @param {Set} props.deployedVmNames - Set of deployed VM names.
  * @param {Function} props.onSearchChange - Search text change handler.
  * @param {Function} props.onSelectConfig - Select config handler.
  * @returns {import('react').JSX.Element} Template List Panel.
@@ -34,6 +36,7 @@ export default function TemplateListPanel({
   resourceLimits,
   inventoryLoading,
   searchText,
+  deployedVmNames,
   onSearchChange,
   onSelectConfig,
 }) {
@@ -69,6 +72,16 @@ export default function TemplateListPanel({
             const vmName = cfg.vm_name || cfg.config?.vm?.name || 'unnamed';
             const configToValidate = cfg.config || cfg;
             const validation = validateStoredConfig(configToValidate, resourceLimits);
+            
+            // Check if VM name is already deployed
+            const isNameDeployed = deployedVmNames.has(normalizeVmName(vmName));
+            const finalValid = validation.valid && !isNameDeployed;
+            const finalError = !validation.valid
+              ? validation.errors[0]
+              : isNameDeployed
+                ? 'VM name already deployed'
+                : '';
+            
             return (
               <ListItemButton
                 key={cfg.id || vmName}
@@ -79,22 +92,23 @@ export default function TemplateListPanel({
                     <Stack direction="row" spacing={1} alignItems="center">
                       <span>{vmName}</span>
                       <Chip
-                        label={validation.valid ? 'Valid' : 'Invalid'}
-                        color={validation.valid ? 'success' : 'error'}
+                        label={finalValid ? 'Valid' : 'Invalid'}
+                        color={finalValid ? 'success' : 'error'}
                         size="small"
                         sx={{ height: 20, fontSize: '0.7rem' }}
                       />
                     </Stack>
                   }
                   secondary={
-                    validation.valid
+                    finalValid
                       ? `Template • ${cfg.config?.vm?.trust || 'unknown trust'}`
-                      : `Template • ${validation.errors[0]}`
+                      : `Template • ${finalError}`
                   }
                 />
               </ListItemButton>
             );
           })}
+
           {filteredConfigs.length === 0 && configs.length > 0 && (
             <Alert severity="info">
               No templates match your search.

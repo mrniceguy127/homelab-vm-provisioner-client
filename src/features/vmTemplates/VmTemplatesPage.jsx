@@ -137,6 +137,7 @@ export default function VmTemplatesPage({
         resourceLimits={resourceLimits}
         inventoryLoading={inventoryLoading}
         searchText={searchText}
+        deployedVmNames={deployedVmNames}
         onSearchChange={onSearchChange}
         onSelectConfig={setSelectedConfigDetail}
       />

@@ -66,9 +66,14 @@ export default function VmFormDialog({
 
   const formMode = formRequest?.mode || 'create';
   const cloneSourceVmName = formRequest?.sourceVmName || '';
+  
+  // Extract original VM name for edit mode from config
+  const originalVmName = formMode === 'edit' && formRequest?.config
+    ? formRequest.config.vm_name || formRequest.config.config?.vm?.name || ''
+    : cloneSourceVmName;
 
   const normalizedDraftVmName = normalizeVmName(formState.name);
-  const normalizedOriginalName = formMode === 'edit' ? normalizeVmName(cloneSourceVmName) : null;
+  const normalizedOriginalName = (formMode === 'edit' || formMode === 'clone') ? normalizeVmName(originalVmName) : null;
 
   const ownerScopedNetworkGroups = networkGroups.filter(
     (group) => !formState.ownerUserId || group.owner_user_id === formState.ownerUserId
@@ -145,12 +150,20 @@ export default function VmFormDialog({
       const preparedPayload = buildVmPayload(effectiveFormState);
 
       let response;
-      if (formMode === 'clone') {
+      let operationType = 'create'; // Track what operation we're actually doing
+      
+      // Only call cloneVm if we have a source VM (from runtime VMs tab)
+      // Template "cloning" is just creating a new config with pre-filled data
+      if (formMode === 'clone' && cloneSourceVmName) {
         response = await cloneVm(apiBase, cloneSourceVmName, preparedPayload);
+        operationType = 'clone';
       } else if (formMode === 'edit') {
-        response = await updateVmConfig(apiBase, cloneSourceVmName, preparedPayload);
+        response = await updateVmConfig(apiBase, originalVmName, preparedPayload);
+        operationType = 'edit';
       } else {
+        // For template duplication (clone mode without sourceVmName) or regular create
         response = mode === 'create' ? await createVm(apiBase, preparedPayload) : await saveVmConfig(apiBase, preparedPayload);
+        operationType = mode === 'create' ? 'create' : 'save';
       }
 
       const nextVmName = response.vmName || preparedPayload.config.vm.name;
@@ -159,16 +172,18 @@ export default function VmFormDialog({
         onTrackJob(nextVmName, {
           job_id: response.job_id,
           status: response.status || 'queued',
-          type: formMode === 'clone' ? 'clone_vm' : 'provision_vm',
+          type: operationType === 'clone' ? 'clone_vm' : 'provision_vm',
         });
       }
 
       showMessage(
-        formMode === 'clone'
+        operationType === 'clone'
           ? `Cloned ${cloneSourceVmName} to ${nextVmName}.`
-          : mode === 'create'
-            ? `Provisioned ${nextVmName}.`
-            : `Saved template for ${nextVmName}.`,
+          : operationType === 'edit'
+            ? `Updated template for ${nextVmName}.`
+            : operationType === 'create'
+              ? `Provisioned ${nextVmName}.`
+              : `Saved template for ${nextVmName}.`,
         'success'
       );
 
@@ -285,18 +300,24 @@ export default function VmFormDialog({
     };
   }, [apiBase, formState.newNetworkGroupSubnet, formState.networkGroupId]);
 
+  // Determine if this is a real VM clone or just a template duplicate
+  const isVmClone = formMode === 'clone' && cloneSourceVmName;
+  const isTemplateDuplicate = formMode === 'clone' && !cloneSourceVmName;
+
   return (
     <Dialog open={open} onClose={handleClose} fullWidth maxWidth="lg">
       <DialogTitle>
-        {formMode === 'clone'
+        {isVmClone
           ? 'Create a Full VM Clone'
-          : formMode === 'edit'
-            ? 'Edit VM Template'
-            : 'Create VM or Save Template'}
+          : isTemplateDuplicate
+            ? 'Duplicate Template'
+            : formMode === 'edit'
+              ? 'Edit VM Template'
+              : 'Create VM or Save Template'}
       </DialogTitle>
       <DialogContent dividers>
         <Stack spacing={3} sx={{ pt: 1 }}>
-          {formMode === 'clone' ? (
+          {isVmClone ? (
             <>
               <Alert severity="info">
                 This creates a full VM clone from <strong>{cloneSourceVmName}</strong>. A unique target
@@ -309,6 +330,12 @@ export default function VmFormDialog({
               </Alert>
               <TextField label="Source VM" value={cloneSourceVmName} InputProps={{ readOnly: true }} />
             </>
+          ) : null}
+          {isTemplateDuplicate ? (
+            <Alert severity="info">
+              Duplicating template <strong>{originalVmName}</strong>. This creates a new template with the same settings.
+              A unique name is prefilled. You can provision or save this as a new template.
+            </Alert>
           ) : null}
           <Box
             sx={{
@@ -369,8 +396,8 @@ export default function VmFormDialog({
               ramMb={formState.ramMb}
               vcpus={formState.vcpus}
               diskGb={formState.diskGb}
-              nameAutoFocus={formMode === 'clone'}
-              nameLabel={formMode === 'clone' ? 'Target VM name' : 'VM name'}
+              nameAutoFocus={isVmClone || isTemplateDuplicate}
+              nameLabel={isVmClone ? 'Target VM name' : isTemplateDuplicate ? 'New template name' : 'VM name'}
               nameError={Boolean(
                 normalizedDraftVmName &&
                   deployedVmNames.has(normalizedDraftVmName) &&
@@ -381,9 +408,11 @@ export default function VmFormDialog({
                 deployedVmNames.has(normalizedDraftVmName) &&
                 normalizedDraftVmName !== normalizedOriginalName
                   ? 'VM name must be unique among deployed VMs.'
-                  : formMode === 'clone'
+                  : isVmClone
                     ? `Choose a unique name for the cloned VM. ${MAX_VM_NAME_LENGTH} characters max.`
-                    : `${MAX_VM_NAME_LENGTH} characters max.`
+                    : isTemplateDuplicate
+                      ? `Choose a unique name for the duplicated template. ${MAX_VM_NAME_LENGTH} characters max.`
+                      : `${MAX_VM_NAME_LENGTH} characters max.`
               }
               onNameChange={(value) => setFormState((current) => ({ ...current, name: value }))}
               onUserChange={(value) => setFormState((current) => ({ ...current, user: value }))}
