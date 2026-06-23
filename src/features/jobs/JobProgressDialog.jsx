@@ -3,22 +3,21 @@ import {
   Alert,
   Box,
   Button,
-  Chip,
   CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
-  Paper,
   Stack,
   Typography,
 } from '@mui/material';
-import { alpha } from '@mui/material/styles';
 import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded';
 
 import { fetchJob, fetchJobEvents } from '../../api.js';
 import { formatJson } from '../../utils/displayUtils.js';
 import JsonPanel from '../../components/common/JsonPanel.jsx';
+import JobStatusHeader from './components/JobStatusHeader.jsx';
+import JobEventsTimeline from './components/JobEventsTimeline.jsx';
 
 /**
  * Job Progress Dialog for monitoring async job execution.
@@ -95,28 +94,7 @@ export default function JobProgressDialog({ open, onClose, jobId, apiBase, showM
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>
-        <Stack direction="row" spacing={2} alignItems="center">
-          <Typography variant="h6">Job Progress</Typography>
-          {jobDetails ? (
-            <>
-              <Chip size="small" label={`#${jobDetails.id}`} variant="outlined" />
-              <Chip size="small" label={jobDetails.type || 'unknown'} color="secondary" />
-              <Chip
-                size="small"
-                label={jobDetails.status || 'unknown'}
-                color={
-                  jobDetails.status === 'succeeded'
-                    ? 'success'
-                    : jobDetails.status === 'failed'
-                      ? 'error'
-                      : jobDetails.status === 'running'
-                        ? 'info'
-                        : 'default'
-                }
-              />
-            </>
-          ) : null}
-        </Stack>
+        <JobStatusHeader jobDetails={jobDetails} />
       </DialogTitle>
       <DialogContent>
         {jobLoading && !jobDetails ? (
@@ -141,54 +119,7 @@ export default function JobProgressDialog({ open, onClose, jobId, apiBase, showM
               </Alert>
             ) : null}
 
-            <Paper variant="outlined" sx={{ p: 2 }}>
-              <Typography variant="subtitle2" gutterBottom>
-                Event Timeline
-              </Typography>
-              {jobEvents.length > 0 ? (
-                <Stack spacing={1} sx={{ mt: 1.5 }}>
-                  {jobEvents.map((event, index) => (
-                    <Box
-                      key={event.id || index}
-                      sx={{
-                        display: 'flex',
-                        gap: 1.5,
-                        p: 1,
-                        borderRadius: 1,
-                        backgroundColor: (theme) => alpha(theme.palette.common.white, 0.02),
-                      }}
-                    >
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        sx={{ minWidth: 80, fontFamily: 'monospace' }}
-                      >
-                        {new Date(event.created_at).toLocaleTimeString()}
-                      </Typography>
-                      <Chip
-                        size="small"
-                        label={event.level}
-                        color={
-                          event.level === 'error'
-                            ? 'error'
-                            : event.level === 'warning'
-                              ? 'warning'
-                              : 'default'
-                        }
-                        sx={{ minWidth: 70 }}
-                      />
-                      <Typography variant="body2" sx={{ flex: 1 }}>
-                        {event.message}
-                      </Typography>
-                    </Box>
-                  ))}
-                </Stack>
-              ) : (
-                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                  No events logged yet.
-                </Typography>
-              )}
-            </Paper>
+            <JobEventsTimeline jobEvents={jobEvents} />
 
             {jobDetails.result || jobDetails.error ? (
               <JsonPanel

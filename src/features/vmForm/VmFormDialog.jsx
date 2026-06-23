@@ -2,23 +2,14 @@ import { useState, useEffect } from 'react';
 import {
   Alert,
   Box,
-  Button,
   Dialog,
-  DialogActions,
   DialogContent,
   DialogTitle,
   Divider,
-  FormControlLabel,
   MenuItem,
   Stack,
-  Switch,
   TextField,
-  Tooltip,
 } from '@mui/material';
-import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
-import RocketLaunchRoundedIcon from '@mui/icons-material/RocketLaunchRounded';
-import SaveRoundedIcon from '@mui/icons-material/SaveRounded';
-
 import {
   createVm,
   saveVmConfig,
@@ -32,6 +23,11 @@ import { buildVmPayload, buildFormStateFromConfig, buildCloneFormState } from '.
 import { createDefaultFormState, normalizeVmName, MAX_VM_NAME_LENGTH } from '../../utils/formUtils.js';
 import JsonPanel from '../../components/common/JsonPanel.jsx';
 import { formatJson } from '../../utils/displayUtils.js';
+import NetworkGroupFormSection from './components/NetworkGroupFormSection.jsx';
+import BasicVmFormSection from './components/BasicVmFormSection.jsx';
+import VmPolicyToggles from './components/VmPolicyToggles.jsx';
+import AdvancedVmFormSection from './components/AdvancedVmFormSection.jsx';
+import VmFormActions from './components/VmFormActions.jsx';
 
 /**
  * VM Form Dialog for create/edit/clone operations.
@@ -348,106 +344,43 @@ export default function VmFormDialog({
                 </MenuItem>
               ))}
             </TextField>
-            <TextField
-              select
-              label="Network group"
-              value={formState.networkGroupId}
-              onChange={(event) =>
-                setFormState((current) => ({ ...current, networkGroupId: event.target.value }))
+            <NetworkGroupFormSection
+              networkGroupId={formState.networkGroupId}
+              newNetworkGroupName={formState.newNetworkGroupName}
+              newNetworkGroupProfile={formState.newNetworkGroupProfile}
+              newNetworkGroupSubnet={formState.newNetworkGroupSubnet}
+              ownerScopedNetworkGroups={ownerScopedNetworkGroups}
+              subnetValidation={subnetValidation}
+              subnetValidating={subnetValidating}
+              onNetworkGroupChange={(value) =>
+                setFormState((current) => ({ ...current, networkGroupId: value }))
               }
-              helperText="One libvirt network is shared by all VMs in the same group."
-            >
-              {ownerScopedNetworkGroups.map((group) => (
-                <MenuItem key={group.id} value={group.id}>
-                  {group.name} ({group.profile})
-                </MenuItem>
-              ))}
-              <MenuItem value="__new__">Create a new network group</MenuItem>
-            </TextField>
-            {formState.networkGroupId === '__new__' ? (
-              <TextField
-                label="New network group name"
-                value={formState.newNetworkGroupName}
-                onChange={(event) =>
-                  setFormState((current) => ({
-                    ...current,
-                    newNetworkGroupName: event.target.value,
-                  }))
-                }
-              />
-            ) : (
-              <TextField
-                label="Assigned group subnet"
-                value={
-                  ownerScopedNetworkGroups.find((group) => group.id === formState.networkGroupId)
-                    ?.subnet_cidr || 'Assigned by API'
-                }
-                InputProps={{ readOnly: true }}
-              />
-            )}
-            {formState.networkGroupId === '__new__' ? (
-              <>
-                <TextField
-                  select
-                  label="New group profile"
-                  value={formState.newNetworkGroupProfile}
-                  onChange={(event) =>
-                    setFormState((current) => ({
-                      ...current,
-                      newNetworkGroupProfile: event.target.value,
-                    }))
-                  }
-                  helperText="`isolated_nat` is the recommended default for tenant isolation."
-                >
-                  <MenuItem value="private">private</MenuItem>
-                  <MenuItem value="nat">nat</MenuItem>
-                  <MenuItem value="isolated_nat">isolated_nat</MenuItem>
-                  <MenuItem value="bridged">bridged</MenuItem>
-                </TextField>
-                {formState.newNetworkGroupProfile !== 'bridged' ? (
-                  <Box>
-                    <TextField
-                      label="Subnet CIDR (optional)"
-                      value={formState.newNetworkGroupSubnet}
-                      onChange={(event) =>
-                        setFormState((current) => ({
-                          ...current,
-                          newNetworkGroupSubnet: event.target.value,
-                        }))
-                      }
-                      placeholder="e.g., 192.168.100.0/29"
-                      error={subnetValidation.valid === false}
-                      helperText={
-                        subnetValidating
-                          ? 'Validating...'
-                          : subnetValidation.valid === false
-                            ? subnetValidation.error
-                            : subnetValidation.valid === true
-                              ? '✓ Valid subnet'
-                              : 'Leave blank to auto-allocate. Max 8 IPs (/29 or smaller), must be within global pool (10.80.0.0/16), and not overlap existing groups.'
-                      }
-                      color={subnetValidation.valid === true ? 'success' : undefined}
-                      fullWidth
-                    />
-                    <Button variant="outlined" size="small" onClick={() => void handleSuggestSubnet()} sx={{ mt: 1 }}>
-                      Auto-Select Available Subnet
-                    </Button>
-                  </Box>
-                ) : null}
-              </>
-            ) : null}
-            <TextField
-              autoFocus={formMode === 'clone'}
-              label={formMode === 'clone' ? 'Target VM name' : 'VM name'}
-              value={formState.name}
-              onChange={(event) => setFormState((current) => ({ ...current, name: event.target.value }))}
-              inputProps={{ maxLength: MAX_VM_NAME_LENGTH }}
-              error={Boolean(
+              onNewNetworkGroupNameChange={(value) =>
+                setFormState((current) => ({ ...current, newNetworkGroupName: value }))
+              }
+              onNewNetworkGroupProfileChange={(value) =>
+                setFormState((current) => ({ ...current, newNetworkGroupProfile: value }))
+              }
+              onNewNetworkGroupSubnetChange={(value) =>
+                setFormState((current) => ({ ...current, newNetworkGroupSubnet: value }))
+              }
+              onSuggestSubnet={() => void handleSuggestSubnet()}
+            />
+            <BasicVmFormSection
+              name={formState.name}
+              user={formState.user}
+              trust={formState.trust}
+              ramMb={formState.ramMb}
+              vcpus={formState.vcpus}
+              diskGb={formState.diskGb}
+              nameAutoFocus={formMode === 'clone'}
+              nameLabel={formMode === 'clone' ? 'Target VM name' : 'VM name'}
+              nameError={Boolean(
                 normalizedDraftVmName &&
                   deployedVmNames.has(normalizedDraftVmName) &&
                   normalizedDraftVmName !== normalizedOriginalName
               )}
-              helperText={
+              nameHelperText={
                 normalizedDraftVmName &&
                 deployedVmNames.has(normalizedDraftVmName) &&
                 normalizedDraftVmName !== normalizedOriginalName
@@ -456,38 +389,12 @@ export default function VmFormDialog({
                     ? `Choose a unique name for the cloned VM. ${MAX_VM_NAME_LENGTH} characters max.`
                     : `${MAX_VM_NAME_LENGTH} characters max.`
               }
-            />
-            <TextField
-              label="Tenant user"
-              value={formState.user}
-              onChange={(event) => setFormState((current) => ({ ...current, user: event.target.value }))}
-            />
-            <TextField
-              select
-              label="Trust"
-              value={formState.trust}
-              onChange={(event) => setFormState((current) => ({ ...current, trust: event.target.value }))}
-            >
-              <MenuItem value="untrusted">untrusted</MenuItem>
-              <MenuItem value="trusted">trusted</MenuItem>
-            </TextField>
-            <TextField
-              type="number"
-              label="RAM (MB)"
-              value={formState.ramMb}
-              onChange={(event) => setFormState((current) => ({ ...current, ramMb: event.target.value }))}
-            />
-            <TextField
-              type="number"
-              label="vCPUs"
-              value={formState.vcpus}
-              onChange={(event) => setFormState((current) => ({ ...current, vcpus: event.target.value }))}
-            />
-            <TextField
-              type="number"
-              label="Disk (GB)"
-              value={formState.diskGb}
-              onChange={(event) => setFormState((current) => ({ ...current, diskGb: event.target.value }))}
+              onNameChange={(value) => setFormState((current) => ({ ...current, name: value }))}
+              onUserChange={(value) => setFormState((current) => ({ ...current, user: value }))}
+              onTrustChange={(value) => setFormState((current) => ({ ...current, trust: value }))}
+              onRamChange={(value) => setFormState((current) => ({ ...current, ramMb: value }))}
+              onVcpusChange={(value) => setFormState((current) => ({ ...current, vcpus: value }))}
+              onDiskChange={(value) => setFormState((current) => ({ ...current, diskGb: value }))}
             />
           </Box>
 
@@ -498,64 +405,28 @@ export default function VmFormDialog({
               gridTemplateColumns: { xs: '1fr', md: 'repeat(2, 1fr)' },
             }}
           >
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={formState.allowSudo}
-                  onChange={(event) =>
-                    setFormState((current) => ({ ...current, allowSudo: event.target.checked }))
-                  }
-                />
+            <VmPolicyToggles
+              allowSudo={formState.allowSudo}
+              allowSameGroupTraffic={formState.allowSameGroupTraffic}
+              internetAccess={formState.internetAccess}
+              allowHostAccess={formState.allowHostAccess}
+              allowPrivateLanAccess={formState.allowPrivateLanAccess}
+              isAdmin={(users.find((user) => user.id === formState.ownerUserId)?.role || '') === 'admin'}
+              onAllowSudoChange={(value) =>
+                setFormState((current) => ({ ...current, allowSudo: value }))
               }
-              label="Grant passwordless sudo to the tenant user"
-            />
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={formState.allowSameGroupTraffic}
-                  onChange={(event) =>
-                    setFormState((current) => ({ ...current, allowSameGroupTraffic: event.target.checked }))
-                  }
-                />
+              onAllowSameGroupTrafficChange={(value) =>
+                setFormState((current) => ({ ...current, allowSameGroupTraffic: value }))
               }
-              label="Allow same-group VM traffic"
-            />
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={formState.internetAccess}
-                  onChange={(event) =>
-                    setFormState((current) => ({ ...current, internetAccess: event.target.checked }))
-                  }
-                />
+              onInternetAccessChange={(value) =>
+                setFormState((current) => ({ ...current, internetAccess: value }))
               }
-              label="Allow internet access"
-            />
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={formState.allowHostAccess}
-                  onChange={(event) =>
-                    setFormState((current) => ({ ...current, allowHostAccess: event.target.checked }))
-                  }
-                />
+              onAllowHostAccessChange={(value) =>
+                setFormState((current) => ({ ...current, allowHostAccess: value }))
               }
-              label="Allow host access"
-            />
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={formState.allowPrivateLanAccess}
-                  disabled={(users.find((user) => user.id === formState.ownerUserId)?.role || '') !== 'admin'}
-                  onChange={(event) =>
-                    setFormState((current) => ({
-                      ...current,
-                      allowPrivateLanAccess: event.target.checked,
-                    }))
-                  }
-                />
+              onAllowPrivateLanAccessChange={(value) =>
+                setFormState((current) => ({ ...current, allowPrivateLanAccess: value }))
               }
-              label="Allow private LAN access (admin only)"
             />
           </Box>
 
@@ -568,90 +439,35 @@ export default function VmFormDialog({
               gridTemplateColumns: { xs: '1fr', lg: 'repeat(2, 1fr)' },
             }}
           >
-            <TextField
-              multiline
-              minRows={3}
-              label="Packages"
-              value={formState.packagesText}
-              onChange={(event) =>
-                setFormState((current) => ({ ...current, packagesText: event.target.value }))
+            <AdvancedVmFormSection
+              packagesText={formState.packagesText}
+              dnsResolversText={formState.dnsResolversText}
+              portsText={formState.portsText}
+              sshPublicKey={formState.sshPublicKey}
+              sshKeyFile={formState.sshKeyFile}
+              setupScript={formState.setupScript}
+              setupScriptFile={formState.setupScriptFile}
+              formMode={formMode}
+              onPackagesChange={(value) =>
+                setFormState((current) => ({ ...current, packagesText: value }))
               }
-              helperText="Comma-separated, for example: git, tmux, htop"
-            />
-            <TextField
-              multiline
-              minRows={3}
-              label="DNS resolvers"
-              value={formState.dnsResolversText}
-              onChange={(event) =>
-                setFormState((current) => ({ ...current, dnsResolversText: event.target.value }))
+              onDnsResolversChange={(value) =>
+                setFormState((current) => ({ ...current, dnsResolversText: value }))
               }
-              helperText="Comma-separated IP addresses. Leave blank to use provisioner defaults."
-            />
-            <TextField
-              multiline
-              minRows={4}
-              label="Forwarded ports"
-              value={formState.portsText}
-              onChange={(event) => setFormState((current) => ({ ...current, portsText: event.target.value }))}
-              helperText={
-                formMode === 'clone'
-                  ? 'One per line. Review host ports before cloning to avoid collisions. Example: 2222:22/tcp'
-                  : 'One per line. Example: 2222:22/tcp'
+              onPortsChange={(value) =>
+                setFormState((current) => ({ ...current, portsText: value }))
               }
-            />
-            <TextField
-              multiline
-              minRows={6}
-              label="Tenant SSH public key"
-              value={formState.sshPublicKey}
-              onChange={(event) =>
-                setFormState((current) => ({ ...current, sshPublicKey: event.target.value }))
+              onSshPublicKeyChange={(value) =>
+                setFormState((current) => ({ ...current, sshPublicKey: value }))
               }
-              helperText={
-                formMode === 'clone'
-                  ? 'Optional. Provide a new tenant SSH key for the clone. When provided, the API stores the key under the provisioner user-keys directory and rewrites vm.ssh_key_file automatically.'
-                  : 'When provided, the API stores the key under the provisioner user-keys directory and rewrites vm.ssh_key_file automatically.'
+              onSshKeyFileChange={(value) =>
+                setFormState((current) => ({ ...current, sshKeyFile: value }))
               }
-            />
-            <TextField
-              multiline
-              minRows={2}
-              label="Existing absolute SSH key path"
-              value={formState.sshKeyFile}
-              onChange={(event) => setFormState((current) => ({ ...current, sshKeyFile: event.target.value }))}
-              helperText={
-                formMode === 'clone'
-                  ? 'Optional. Point the clone at a different tenant key path when you are not submitting sshPublicKey.'
-                  : 'Use this only when you are not submitting sshPublicKey.'
+              onSetupScriptChange={(value) =>
+                setFormState((current) => ({ ...current, setupScript: value }))
               }
-            />
-            <TextField
-              multiline
-              minRows={6}
-              label="Post-cloud-init setup script"
-              value={formState.setupScript}
-              onChange={(event) =>
-                setFormState((current) => ({ ...current, setupScript: event.target.value }))
-              }
-              helperText={
-                formMode === 'clone'
-                  ? 'Optional. Review whether the source setup script still applies to the clone.'
-                  : 'Optional shell script content to run after the built-in cloud-init commands finish.'
-              }
-            />
-            <TextField
-              multiline
-              minRows={2}
-              label="Existing absolute setup script path"
-              value={formState.setupScriptFile}
-              onChange={(event) =>
-                setFormState((current) => ({ ...current, setupScriptFile: event.target.value }))
-              }
-              helperText={
-                formMode === 'clone'
-                  ? 'Optional. Review whether the source setup script path should be reused for the clone.'
-                  : 'Use this only when you are not submitting setupScript content.'
+              onSetupScriptFileChange={(value) =>
+                setFormState((current) => ({ ...current, setupScriptFile: value }))
               }
             />
           </Box>
@@ -665,52 +481,13 @@ export default function VmFormDialog({
           />
         </Stack>
       </DialogContent>
-      <DialogActions sx={{ px: 3, py: 2 }}>
-        <Button onClick={handleClose}>Cancel</Button>
-        {formMode === 'clone' ? (
-          <Tooltip title="Save the cloned config and create a full VM clone from the source disk.">
-            <span>
-              <Button
-                variant="contained"
-                color="secondary"
-                startIcon={<ContentCopyRoundedIcon />}
-                disabled={submitState !== 'idle' || !draftPayload}
-                onClick={() => void handleFormSubmit('clone')}
-              >
-                {submitState === 'clone' ? 'Cloning…' : 'Create Full Clone'}
-              </Button>
-            </span>
-          </Tooltip>
-        ) : (
-          <>
-            <Tooltip title="Persist the config without provisioning a VM.">
-              <span>
-                <Button
-                  variant="outlined"
-                  color="secondary"
-                  startIcon={<SaveRoundedIcon />}
-                  disabled={submitState !== 'idle' || !draftPayload}
-                  onClick={() => void handleFormSubmit('config')}
-                >
-                  {submitState === 'config' ? 'Saving…' : 'Save config'}
-                </Button>
-              </span>
-            </Tooltip>
-            <Tooltip title="Save the config and call the provisioner immediately.">
-              <span>
-                <Button
-                  variant="contained"
-                  startIcon={<RocketLaunchRoundedIcon />}
-                  disabled={submitState !== 'idle' || !draftPayload}
-                  onClick={() => void handleFormSubmit('create')}
-                >
-                  {submitState === 'create' ? 'Provisioning…' : 'Create VM'}
-                </Button>
-              </span>
-            </Tooltip>
-          </>
-        )}
-      </DialogActions>
+      <VmFormActions
+        formMode={formMode}
+        submitState={submitState}
+        draftPayload={draftPayload}
+        onCancel={handleClose}
+        onSubmit={handleFormSubmit}
+      />
     </Dialog>
   );
 }

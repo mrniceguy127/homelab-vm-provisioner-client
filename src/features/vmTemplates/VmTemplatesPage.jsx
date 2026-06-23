@@ -1,27 +1,10 @@
 import { useState } from 'react';
-import {
-  Alert,
-  Box,
-  Button,
-  Chip,
-  CircularProgress,
-  InputAdornment,
-  List,
-  ListItemButton,
-  ListItemText,
-  Paper,
-  Stack,
-  TextField,
-  Typography,
-} from '@mui/material';
-import { alpha } from '@mui/material/styles';
-import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
-import EditRoundedIcon from '@mui/icons-material/EditRounded';
-import DeleteRoundedIcon from '@mui/icons-material/DeleteRounded';
+import { Box } from '@mui/material';
 
-import { validateStoredConfig } from '../../utils/validationUtils.js';
 import { buildUniqueCloneName } from '../../utils/configUtils.js';
 import { provisionSavedVm, deleteVmConfig } from '../../api.js';
+import TemplateListPanel from './components/TemplateListPanel.jsx';
+import TemplateDetailPanel from './components/TemplateDetailPanel.jsx';
 
 /**
  * VM Templates tab - displays config-only VM definitions.
@@ -148,197 +131,24 @@ export default function VmTemplatesPage({
         gridTemplateColumns: { xs: '1fr', xl: '360px minmax(0, 1fr)' },
       }}
     >
-      <Paper sx={{ p: 2.5 }}>
-        <Stack spacing={2}>
-          <Stack direction="row" justifyContent="space-between" alignItems="center">
-            <Box>
-              <Typography variant="h6">VM Templates</Typography>
-              <Typography variant="body2" color="text.secondary">
-                VM definitions that follow your user account across all hosts.
-              </Typography>
-            </Box>
-            {inventoryLoading ? <CircularProgress size={20} /> : null}
-          </Stack>
-
-          <TextField
-            size="small"
-            placeholder="Search templates"
-            value={searchText}
-            onChange={(event) => onSearchChange(event.target.value)}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <SearchRoundedIcon fontSize="small" />
-                </InputAdornment>
-              ),
-            }}
-          />
-
-          <List sx={{ p: 0 }}>
-            {filteredConfigs.map((cfg) => {
-              const vmName = cfg.vm_name || cfg.config?.vm?.name || 'unnamed';
-              const configToValidate = cfg.config || cfg;
-              const validation = validateStoredConfig(configToValidate, resourceLimits);
-              return (
-                <ListItemButton
-                  key={cfg.id || vmName}
-                  onClick={() => {
-                    setSelectedConfigDetail(cfg);
-                  }}
-                >
-                  <ListItemText
-                    primary={
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <span>{vmName}</span>
-                        <Chip
-                          label={validation.valid ? 'Valid' : 'Invalid'}
-                          color={validation.valid ? 'success' : 'error'}
-                          size="small"
-                          sx={{ height: 20, fontSize: '0.7rem' }}
-                        />
-                      </Stack>
-                    }
-                    secondary={
-                      validation.valid
-                        ? `Template • ${cfg.config?.vm?.trust || 'unknown trust'}`
-                        : `Template • ${validation.errors[0]}`
-                    }
-                  />
-                </ListItemButton>
-              );
-            })}
-            {filteredConfigs.length === 0 && configs.length > 0 && (
-              <Alert severity="info">
-                No templates match your search.
-              </Alert>
-            )}
-            {configs.length === 0 && (
-              <Alert severity="info">
-                No VM templates found. Create a new VM to save a template.
-              </Alert>
-            )}
-          </List>
-        </Stack>
-      </Paper>
-
-      <Paper sx={{ p: 2.5 }}>
-        {!selectedConfigDetail ? (
-          <Alert severity="info">
-            Select a VM template from the list to view its configuration details.
-          </Alert>
-        ) : (
-          <Stack spacing={2.5}>
-            <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
-              <Box>
-                <Typography variant="h6">
-                  {selectedConfigDetail.vm_name || selectedConfigDetail.config?.vm?.name}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  VM Template Configuration
-                </Typography>
-              </Box>
-              <Stack direction="row" spacing={1}>
-                <Button
-                  variant="contained"
-                  size="small"
-                  disabled={
-                    configActionState !== 'idle' ||
-                    !validateStoredConfig(
-                      selectedConfigDetail.config || selectedConfigDetail,
-                      resourceLimits
-                    ).valid
-                  }
-                  onClick={() => {
-                    const vmName =
-                      selectedConfigDetail.vm_name || selectedConfigDetail.config?.vm?.name;
-                    void handleDeploy(vmName);
-                  }}
-                >
-                  Deploy
-                </Button>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  disabled={configActionState !== 'idle'}
-                  onClick={() => {
-                    const config = selectedConfigDetail.config || selectedConfigDetail;
-                    handleClone(config);
-                  }}
-                >
-                  Clone
-                </Button>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  startIcon={<EditRoundedIcon />}
-                  disabled={configActionState !== 'idle'}
-                  onClick={() =>
-                    handleEditConfig(selectedConfigDetail.config || selectedConfigDetail)
-                  }
-                >
-                  Edit
-                </Button>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  color="error"
-                  startIcon={<DeleteRoundedIcon />}
-                  disabled={configActionState !== 'idle'}
-                  onClick={() =>
-                    void handleDeleteConfig(
-                      selectedConfigDetail.vm_name || selectedConfigDetail.config?.vm?.name
-                    )
-                  }
-                >
-                  Delete
-                </Button>
-              </Stack>
-            </Stack>
-
-            {(() => {
-              const validation = validateStoredConfig(
-                selectedConfigDetail.config || selectedConfigDetail,
-                resourceLimits
-              );
-              if (!validation.valid) {
-                return (
-                  <Alert severity="error">
-                    <Typography variant="subtitle2" gutterBottom>
-                      Invalid Configuration
-                    </Typography>
-                    <Typography variant="body2" component="div">
-                      <ul style={{ margin: 0, paddingLeft: '1.2em' }}>
-                        {validation.errors.map((err, idx) => (
-                          <li key={idx}>{err}</li>
-                        ))}
-                      </ul>
-                    </Typography>
-                  </Alert>
-                );
-              }
-              return <Alert severity="success">Configuration is valid</Alert>;
-            })()}
-
-            <Box>
-              <Typography
-                variant="body2"
-                component="pre"
-                sx={{
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                  fontFamily: 'monospace',
-                  fontSize: '0.875rem',
-                  backgroundColor: (theme) => alpha(theme.palette.common.black, 0.2),
-                  p: 2,
-                  borderRadius: 1,
-                }}
-              >
-                {JSON.stringify(selectedConfigDetail, null, 2)}
-              </Typography>
-            </Box>
-          </Stack>
-        )}
-      </Paper>
+      <TemplateListPanel
+        configs={configs}
+        filteredConfigs={filteredConfigs}
+        resourceLimits={resourceLimits}
+        inventoryLoading={inventoryLoading}
+        searchText={searchText}
+        onSearchChange={onSearchChange}
+        onSelectConfig={setSelectedConfigDetail}
+      />
+      <TemplateDetailPanel
+        selectedConfig={selectedConfigDetail}
+        resourceLimits={resourceLimits}
+        actionState={configActionState}
+        onDeploy={handleDeploy}
+        onClone={handleClone}
+        onEdit={handleEditConfig}
+        onDelete={handleDeleteConfig}
+      />
     </Box>
   );
 }

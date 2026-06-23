@@ -3,25 +3,14 @@ import {
   Alert,
   Box,
   Button,
-  Chip,
   CircularProgress,
   Stack,
   Tab,
   Tabs,
-  Tooltip,
   Typography,
 } from '@mui/material';
-import { alpha } from '@mui/material/styles';
-import BackupRoundedIcon from '@mui/icons-material/BackupRounded';
-import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
-import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import DnsRoundedIcon from '@mui/icons-material/DnsRounded';
 import HubRoundedIcon from '@mui/icons-material/HubRounded';
-import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded';
-import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded';
-import RocketLaunchRoundedIcon from '@mui/icons-material/RocketLaunchRounded';
-import StopRoundedIcon from '@mui/icons-material/StopRounded';
-import TimelineRoundedIcon from '@mui/icons-material/TimelineRounded';
 
 import {
   destroyVm,
@@ -42,6 +31,9 @@ import { validateDnsResolvers, validatePortRules } from '../../../utils/validati
 import { buildUniqueCloneName } from '../../../utils/configUtils.js';
 import MetricCard from '../../../components/common/MetricCard.jsx';
 import VmDetailTabs from './VmDetailTabs.jsx';
+import VmDetailHeader from './VmDetailHeader.jsx';
+import VmPowerControls from './VmPowerControls.jsx';
+import VmActionButtons from './VmActionButtons.jsx';
 
 /**
  * VM detail view with actions and tabs.
@@ -344,150 +336,45 @@ export default function VmDetailView({
   return (
     <Stack spacing={3}>
       <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" spacing={2}>
-        <Box>
-          <Stack direction="row" spacing={1.2} alignItems="center" flexWrap="wrap" useFlexGap>
-            <Typography variant="h4">{selectedVmName}</Typography>
-            <Chip color={selectedStatus.color} label={selectedStatus.label} />
-            {vmDetail?.configured ? (
-              <Chip variant="outlined" color="secondary" label="Has template" />
-            ) : null}
-            {selectedVmNetworkGroup ? <Chip variant="outlined" label={selectedVmNetworkGroup.name} /> : null}
-          </Stack>
-          <Typography variant="body1" color="text.secondary" sx={{ mt: 1 }}>
-            {vmDetail?.ip_address || 'No live IP reported'} •{' '}
-            {vmDetail?.network?.profile || vmDetail?.network?.mode || 'No network profile reported'}
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-            Owner: {selectedVmOwner?.username || vmDetail?.owner_user_id || 'unknown'} • MAC:{' '}
-            {vmDetail?.mac_address || vmDetail?.network?.mac || 'Unavailable'}
-          </Typography>
-        </Box>
+        <VmDetailHeader
+          vmName={selectedVmName}
+          statusDescriptor={selectedStatus}
+          hasTemplate={Boolean(vmDetail?.configured)}
+          networkGroupName={selectedVmNetworkGroup?.name || null}
+          ipAddress={vmDetail?.ip_address}
+          networkProfile={vmDetail?.network?.profile || vmDetail?.network?.mode}
+          ownerUsername={selectedVmOwner?.username || vmDetail?.owner_user_id}
+          macAddress={vmDetail?.mac_address || vmDetail?.network?.mac}
+        />
         <Stack spacing={1.25} alignItems={{ xs: 'stretch', md: 'flex-end' }}>
-          <Box
-            sx={{
-              px: 1.5,
-              py: 1.25,
-              borderRadius: 2.5,
-              border: (theme) => `1px solid ${alpha(theme.palette.common.white, 0.08)}`,
-              backgroundColor: (theme) => alpha(theme.palette.common.white, 0.03),
+          <VmPowerControls
+            powerStateLabel={powerStateLabel}
+            powerStateColor={powerStateColor}
+            canStart={canStartSelectedVm}
+            canStop={canStopSelectedVm}
+            actionState={vmActionState}
+            onStart={() => void handleStartVm()}
+            onStop={() => void handleStopVm()}
+          />
+          <VmActionButtons
+            hasClonableConfig={hasClonableConfig}
+            canClone={canCloneVm}
+            canCreateSnapshot={canCreateSnapshot}
+            canProvisionStoredConfig={canProvisionStoredConfig}
+            vmExists={Boolean(vmDetail?.exists)}
+            hasJobProgress={Boolean(vmJobs[selectedVmName]?.job_id)}
+            actionState={vmActionState}
+            onClone={openCloneDialog}
+            onCreateSnapshot={() => void handleCreateRestorePoint()}
+            onProvisionStoredConfig={() => void handleProvisionStoredConfig()}
+            onRefresh={async () => {
+              await onRefresh();
+              await loadVmDetails();
+              await loadSnapshot();
             }}
-          >
-            <Stack
-              direction={{ xs: 'column', sm: 'row' }}
-              spacing={1.25}
-              justifyContent="space-between"
-              alignItems={{ xs: 'stretch', sm: 'center' }}
-            >
-              <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-                <Typography variant="body2" color="text.secondary">
-                  Power controls
-                </Typography>
-                <Chip size="small" color={powerStateColor} label={powerStateLabel} />
-              </Stack>
-              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                <Button
-                  variant="contained"
-                  startIcon={<PlayArrowRoundedIcon />}
-                  disabled={vmActionState !== 'idle' || !canStartSelectedVm}
-                  onClick={() => void handleStartVm()}
-                >
-                  {vmActionState === 'start' ? 'Starting…' : 'Start'}
-                </Button>
-                <Button
-                  variant="outlined"
-                  color="warning"
-                  startIcon={<StopRoundedIcon />}
-                  disabled={vmActionState !== 'idle' || !canStopSelectedVm}
-                  onClick={() => void handleStopVm()}
-                >
-                  {vmActionState === 'stop' ? 'Stopping…' : 'Stop'}
-                </Button>
-              </Stack>
-            </Stack>
-          </Box>
-          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-            {hasClonableConfig ? (
-              <Tooltip
-                title={
-                  canCloneVm
-                    ? 'Create a full VM clone from the source disk.'
-                    : 'Full VM clones require a live source VM disk.'
-                }
-              >
-                <span>
-                  <Button
-                    variant="outlined"
-                    color="secondary"
-                    startIcon={<ContentCopyRoundedIcon />}
-                    disabled={vmActionState !== 'idle' || !canCloneVm}
-                    onClick={openCloneDialog}
-                  >
-                    Full Clone
-                  </Button>
-                </span>
-              </Tooltip>
-            ) : null}
-            <Tooltip
-              title={
-                canCreateSnapshot
-                  ? 'Capture a reusable VM snapshot.'
-                  : 'Snapshots require a provisioned VM disk.'
-              }
-            >
-              <span>
-                <Button
-                  variant="outlined"
-                  startIcon={<BackupRoundedIcon />}
-                  disabled={vmActionState !== 'idle' || !canCreateSnapshot}
-                  onClick={() => void handleCreateRestorePoint()}
-                >
-                  {vmActionState === 'snapshot-create' ? 'Saving…' : 'Create Snapshot'}
-                </Button>
-              </span>
-            </Tooltip>
-            {canProvisionStoredConfig ? (
-              <Button
-                variant="contained"
-                color="secondary"
-                startIcon={<RocketLaunchRoundedIcon />}
-                disabled={vmActionState !== 'idle'}
-                onClick={() => void handleProvisionStoredConfig()}
-              >
-                {vmActionState === 'provision' ? 'Provisioning…' : 'Provision from template'}
-              </Button>
-            ) : null}
-            <Button
-              variant="outlined"
-              startIcon={<RefreshRoundedIcon />}
-              disabled={vmActionState !== 'idle'}
-              onClick={async () => {
-                await onRefresh();
-                await loadVmDetails();
-                await loadSnapshot();
-              }}
-            >
-              Refresh
-            </Button>
-            {vmJobs[selectedVmName]?.job_id ? (
-              <Button
-                variant="outlined"
-                color="info"
-                startIcon={<TimelineRoundedIcon />}
-                onClick={() => onOpenJobProgress(selectedVmName)}
-              >
-                View Progress
-              </Button>
-            ) : null}
-            <Button
-              variant="outlined"
-              color="error"
-              startIcon={<DeleteOutlineRoundedIcon />}
-              disabled={vmActionState !== 'idle' || !vmDetail?.exists}
-              onClick={() => void handleDestroyVm()}
-            >
-              {vmActionState === 'destroy' ? 'Destroying…' : 'Destroy VM'}
-            </Button>
-          </Stack>
+            onViewJobProgress={() => onOpenJobProgress(selectedVmName)}
+            onDestroy={() => void handleDestroyVm()}
+          />
         </Stack>
       </Stack>
 
