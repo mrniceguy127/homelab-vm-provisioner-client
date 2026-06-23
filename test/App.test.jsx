@@ -33,8 +33,8 @@ function createVmDetail(overrides = {}) {
   return {
     name,
     configured: true,
-    exists: false,
-    status: 'unknown',
+    exists: true,
+    status: 'running',
     owner_user_id: 'user-admin',
     network_group_id: 'ng-admin',
     allow_same_group_traffic: true,
@@ -101,6 +101,16 @@ function stubClientApi(detailVm = createVmDetail()) {
       });
     }
 
+    if (url.endsWith('/api/config')) {
+      return createJsonResponse({
+        limits: {
+          maxRamMb: 8192,
+          maxVcpus: 4,
+          maxDiskGb: 20,
+        },
+      });
+    }
+
     if (url.endsWith('/api/network-groups')) {
       return createJsonResponse({
         networkGroups: [{
@@ -116,6 +126,23 @@ function stubClientApi(detailVm = createVmDetail()) {
     if (url.endsWith('/api/vms')) {
       return createJsonResponse({
         vms: [createInventoryVm(detailVm)],
+      });
+    }
+
+    if (url.endsWith('/api/configs')) {
+      return createJsonResponse({
+        configs: detailVm.configured ? [{
+          id: '1',
+          vm_name: detailVm.name,
+          owner_user_id: detailVm.owner_user_id,
+          network_group_id: detailVm.network_group_id,
+          target_host_id: 'local',
+          config: detailVm.storedConfig,
+          ssh_public_key: null,
+          setup_script: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }] : [],
       });
     }
 
@@ -138,16 +165,26 @@ afterEach(() => {
 });
 
 test('renders the configured inventory and exposes the provision action', async () => {
-  stubClientApi();
+  const user = userEvent.setup();
+  // Use a config-only VM (not deployed) to test provision button
+  stubClientApi(createVmDetail({ exists: false, status: 'unknown' }));
   renderApp();
 
-  // Navigate to VMs tab (index 1)
-  const user = userEvent.setup();
-  const vmsTab = await screen.findByRole('tab', { name: /runtime vms/i });
-  await user.click(vmsTab);
+  // Navigate to VM Templates tab where config-only VMs are shown
+  const templatesTab = await screen.findByRole('tab', { name: /vm templates/i });
+  await user.click(templatesTab);
 
-  // Look for provision button with updated text
-  expect(await screen.findByRole('button', { name: /provision from template/i })).toBeInTheDocument();
+  // Wait for the config to appear in the list
+  const vmNameElements = await screen.findAllByText(/devbox/i);
+  expect(vmNameElements.length).toBeGreaterThan(0);
+
+  // Click on the config to select it
+  await user.click(vmNameElements[0]);
+
+  // Should see the Deploy button for config-only VMs
+  await waitFor(() => {
+    expect(screen.getByRole('button', { name: /deploy/i })).toBeInTheDocument();
+  });
 });
 
 test('opens the full clone dialog with a suggested unique name and cleared conflict-prone fields', async () => {

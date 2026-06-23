@@ -11,7 +11,7 @@ import {
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 
-import { fetchVmState } from './api.js';
+import { fetchVmState } from '../../../api.js';
 
 /**
  * Format JSON for display
@@ -30,9 +30,8 @@ export default function VMStateDetail({ apiBase, vmName }) {
   const [stateData, setStateData] = useState(null);
 
   useEffect(() => {
+    // Don't run effect if no vmName - component will just show the info message
     if (!vmName) {
-      setStateData(null);
-      setLoading(false);
       return;
     }
 

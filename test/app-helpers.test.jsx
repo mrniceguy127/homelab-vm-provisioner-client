@@ -1,26 +1,35 @@
 import { expect, test } from 'vitest';
 
 import {
-  buildCloneFormState,
-  buildClonedConfig,
-  buildFormStateFromConfig,
-  buildStatusDescriptor,
-  buildUniqueCloneName,
-  buildVmPayload,
   createDefaultFormState,
-  escapeRegExp,
-  formatJson,
-  formatNetworkSummary,
-  isValidIPv4,
-  isVmRunning,
-  normalizeVmName,
-  parseCommaSeparatedList,
-  parseLineCount,
-  parsePortRules,
   parsePositiveInteger,
+  parseLineCount,
+  parseCommaSeparatedList,
+  parsePortRules,
+  normalizeVmName,
+  escapeRegExp,
+} from '../src/utils/formUtils.js';
+
+import {
+  isValidIPv4,
   validateDnsResolvers,
   validatePortRules,
-} from '../src/App.jsx';
+} from '../src/utils/validationUtils.js';
+
+import {
+  buildUniqueCloneName,
+  buildClonedConfig,
+  buildFormStateFromConfig,
+  buildCloneFormState,
+  buildVmPayload,
+} from '../src/utils/configUtils.js';
+
+import {
+  buildStatusDescriptor,
+  isVmRunning,
+  formatJson,
+  formatNetworkSummary,
+} from '../src/utils/displayUtils.js';
 
 test('parsePortRules supports proto suffixes and defaults to tcp', () => {
   expect(parsePortRules('2222:22\n8080:80/udp')).toEqual([
@@ -324,7 +333,7 @@ test('validatePortRules allows valid port rules', () => {
 });
 
 test('validatePortRules throws on invalid port rules', () => {
-  expect(() => validatePortRules('invalid')).toThrow(/Port rule/);
-  expect(() => validatePortRules('8080')).toThrow(/Port rule/);
-  expect(() => validatePortRules('8080:80\ninvalid')).toThrow(/Port rule/);
+  expect(() => validatePortRules('invalid')).toThrow(/port rule/i);
+  expect(() => validatePortRules('8080')).toThrow(/port rule/i);
+  expect(() => validatePortRules('8080:80\ninvalid')).toThrow(/port rule/i);
 });

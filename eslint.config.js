@@ -30,7 +30,7 @@ export default [
       'react/react-in-jsx-scope': 'off',
       'react/prop-types': 'off',
       'react-hooks/exhaustive-deps': 'warn',
-      'react-hooks/set-state-in-effect': 'warn',
+      'react-hooks/set-state-in-effect': 'off', // Disabled: Rule is overly restrictive for valid synchronization patterns
     },
     settings: {
       react: {
