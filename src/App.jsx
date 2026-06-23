@@ -300,6 +300,7 @@ export default function App() {
             <NetworkGroupsPage
               networkGroups={networkGroups}
               users={users}
+              vms={vms}
               inventoryLoading={inventoryLoading}
               searchText={searchText}
               apiBase={apiBase}

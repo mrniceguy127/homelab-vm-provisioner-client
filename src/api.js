@@ -177,6 +177,19 @@ export function createNetworkGroup(baseUrl, payload) {
 }
 
 /**
+ * Delete a network group.
+ *
+ * @param {string} baseUrl - Optional external API base URL.
+ * @param {string} networkGroupId - Network group ID to delete.
+ * @returns {Promise<any>} Deleted network-group payload.
+ */
+export function deleteNetworkGroup(baseUrl, networkGroupId) {
+  return requestJson(baseUrl, `/api/network-groups/${networkGroupId}`, {
+    method: 'DELETE',
+  });
+}
+
+/**
  * Validate a network group CIDR.
  *
  * @param {string} baseUrl - Optional external API base URL.

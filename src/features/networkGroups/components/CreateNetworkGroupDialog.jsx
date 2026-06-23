@@ -44,6 +44,7 @@ export default function CreateNetworkGroupDialog({
     subnetCidr: '',
   });
   const [submitState, setSubmitState] = useState('idle');
+  const [nameValidation, setNameValidation] = useState({ valid: null, error: '' });
   const [subnetValidation, setSubnetValidation] = useState({ valid: null, error: '' });
   const [subnetValidating, setSubnetValidating] = useState(false);
 
@@ -66,10 +67,42 @@ export default function CreateNetworkGroupDialog({
         profile: 'isolated_nat',
         subnetCidr: '',
       });
+      setNameValidation({ valid: null, error: '' });
       setSubnetValidation({ valid: null, error: '' });
       setSubmitState('idle');
     }
   }, [open, users]);
+
+  // Validate network group name
+  useEffect(() => {
+    const trimmedName = formState.name.trim();
+    
+    if (!trimmedName) {
+      setNameValidation({ valid: null, error: '' });
+      return;
+    }
+
+    // Max length check (accounting for libvirt network name generation)
+    const MAX_NAME_LENGTH = 40;
+    if (trimmedName.length > MAX_NAME_LENGTH) {
+      setNameValidation({
+        valid: false,
+        error: `Name is too long (max ${MAX_NAME_LENGTH} characters)`,
+      });
+      return;
+    }
+
+    // Allowed characters check
+    if (!/^[a-zA-Z0-9_\- ]+$/.test(trimmedName)) {
+      setNameValidation({
+        valid: false,
+        error: 'Use only letters, numbers, hyphens, underscores, and spaces',
+      });
+      return;
+    }
+
+    setNameValidation({ valid: true, error: '' });
+  }, [formState.name]);
 
   // Debounced CIDR validation
   useEffect(() => {
@@ -146,6 +179,7 @@ export default function CreateNetworkGroupDialog({
   const canSubmit =
     submitState === 'idle' &&
     formState.name.trim() &&
+    nameValidation.valid === true &&
     formState.ownerUserId &&
     formState.profile &&
     (formState.profile === 'bridged' || !formState.subnetCidr.trim() || subnetValidation.valid === true);
@@ -168,7 +202,15 @@ export default function CreateNetworkGroupDialog({
             }
             autoFocus
             required
-            helperText="Descriptive name for this network group"
+            error={nameValidation.valid === false}
+            helperText={
+              nameValidation.valid === false
+                ? nameValidation.error
+                : nameValidation.valid === true
+                  ? '✓ Valid name'
+                  : 'Letters, numbers, hyphens, underscores, and spaces (max 40 chars)'
+            }
+            color={nameValidation.valid === true ? 'success' : undefined}
           />
 
           <TextField
