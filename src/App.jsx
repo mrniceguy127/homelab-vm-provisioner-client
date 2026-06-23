@@ -997,10 +997,20 @@ export default function App() {
 
     if (inventoryResult.status === 'fulfilled') {
       const nextVms = inventoryResult.value.vms || [];
+      // Prefer selecting a runtime VM (exists=true) over config-only VMs
+      const runtimeVmNames = nextVms.filter(vm => vm.exists === true).map(vm => vm.name);
       const availableNames = new Set(nextVms.map((vm) => vm.name));
-      const nextSelectedName = availableNames.has(preferredName)
-        ? preferredName
-        : nextVms[0]?.name || '';
+      
+      let nextSelectedName;
+      if (availableNames.has(preferredName)) {
+        nextSelectedName = preferredName;
+      } else if (runtimeVmNames.length > 0) {
+        // Prefer first runtime VM
+        nextSelectedName = runtimeVmNames[0];
+      } else {
+        // Fall back to any VM
+        nextSelectedName = nextVms[0]?.name || '';
+      }
 
       startTransition(() => {
         setVms(nextVms);
@@ -1585,6 +1595,17 @@ export default function App() {
     void loadConfig();
   }, [apiBase]);
 
+  // Clear selectedVmName when switching to Runtime VMs tab if it points to a non-runtime VM
+  useEffect(() => {
+    if (mainTab === 1 && selectedVmName) {
+      const selectedVmData = vms.find(vm => vm.name === selectedVmName);
+      if (selectedVmData && !selectedVmData.exists) {
+        // Selected VM is config-only, clear it for Runtime VMs tab
+        setSelectedVmName('');
+      }
+    }
+  }, [mainTab, selectedVmName, vms]);
+
   useEffect(() => {
     if (!createDialogOpen) {
       return;
@@ -1906,7 +1927,8 @@ export default function App() {
                         <ListItemButton
                           key={cfg.id || vmName}
                           onClick={() => {
-                            // Don't set selectedVmName for config-only entries to avoid confusion in Runtime VMs tab
+                            // Clear selectedVmName to prevent config-only VMs from appearing in Runtime VMs tab
+                            setSelectedVmName('');
                             setSelectedConfigDetail(cfg);
                           }}
                         >
@@ -1964,11 +1986,37 @@ export default function App() {
                           variant="contained"
                           size="small"
                           disabled={configActionState !== 'idle' || !validateStoredConfig(selectedConfigDetail.config || selectedConfigDetail, resourceLimits).valid}
-                          onClick={() => {
+                          onClick={async () => {
                             const vmName = selectedConfigDetail.vm_name || selectedConfigDetail.config?.vm?.name;
-                            setSelectedVmName(vmName);
-                            setSelectedVm(vms.find(v => v.name === vmName) || null);
-                            void handleProvisionVm();
+                            
+                            setConfigActionState('provisioning');
+                            try {
+                              const response = await provisionSavedVm(apiBase, vmName);
+                              
+                              // Track job ID for progress monitoring
+                              if (response.job_id) {
+                                setVmJobs(prev => ({
+                                  ...prev,
+                                  [vmName]: {
+                                    job_id: response.job_id,
+                                    status: response.status || 'queued',
+                                    type: 'provision_vm',
+                                    timestamp: new Date().toISOString(),
+                                  }
+                                }));
+                              }
+                              
+                              showMessage(`Provisioned ${vmName} from its saved template.`, 'success');
+                              await refreshInventory(vmName);
+                              // Switch to Runtime VMs tab and select the newly provisioned VM
+                              setMainTab(1);
+                              setSelectedVmName(vmName);
+                              await loadVmDetails(vmName);
+                            } catch (error) {
+                              showMessage(error.message, 'error');
+                            } finally {
+                              setConfigActionState('idle');
+                            }
                           }}
                         >
                           Deploy
@@ -2162,12 +2210,13 @@ export default function App() {
             </Paper>
 
             <Paper sx={{ p: { xs: 2.5, md: 3 } }}>
-              {!selectedVmName ? (
+              {!selectedVmName || !selectedVm?.exists ? (
                 <Stack spacing={2} alignItems="flex-start">
                   <Typography variant="h5">No VM selected</Typography>
                   <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 560 }}>
-                    Create a new VM or select an existing item from the inventory to
-                    inspect its live status, config, and logs.
+                    {selectedVmName && !selectedVm?.exists
+                      ? 'This VM is not currently deployed. Switch to VM Templates tab to view its configuration.'
+                      : 'Create a new VM or select an existing item from the inventory to inspect its live status, config, and logs.'}
                   </Typography>
                   <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={openCreateDialog}>
                     Create VM
@@ -2920,10 +2969,16 @@ export default function App() {
                 value={formState.name}
                 onChange={(event) => setFormState((current) => ({ ...current, name: event.target.value }))}
                 inputProps={{ maxLength: MAX_VM_NAME_LENGTH }}
-                error={Boolean(normalizedDraftVmName && knownVmNames.has(normalizedDraftVmName))}
+                error={Boolean(
+                  normalizedDraftVmName &&
+                  knownVmNames.has(normalizedDraftVmName) &&
+                  normalizedDraftVmName !== normalizedOriginalName
+                )}
                 helperText={
-                  normalizedDraftVmName && knownVmNames.has(normalizedDraftVmName)
-                    ? 'VM name must be unique.'
+                  normalizedDraftVmName &&
+                  knownVmNames.has(normalizedDraftVmName) &&
+                  normalizedDraftVmName !== normalizedOriginalName
+                    ? 'VM name must be unique among deployed VMs.'
                     : formMode === 'clone'
                       ? `Choose a unique name for the cloned VM. ${MAX_VM_NAME_LENGTH} characters max.`
                       : `${MAX_VM_NAME_LENGTH} characters max.`
