@@ -120,6 +120,16 @@ export function fetchHealth(baseUrl) {
 }
 
 /**
+ * Fetch system configuration including resource limits.
+ *
+ * @param {string} baseUrl - Optional external API base URL.
+ * @returns {Promise<any>} Config payload with limits.
+ */
+export function fetchConfig(baseUrl) {
+  return requestJson(baseUrl, '/api/config');
+}
+
+/**
  * Fetch persisted tenant/user records.
  *
  * @param {string} baseUrl - Optional external API base URL.

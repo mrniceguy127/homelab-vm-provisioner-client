@@ -56,6 +56,7 @@ import {
   deleteVmConfig,
   deleteVmSnapshot,
   destroyVm,
+  fetchConfig,
   fetchConfigs,
   fetchHealth,
   fetchJob,
@@ -105,11 +106,6 @@ const baseFormState = {
   setupScript: '',
   setupScriptFile: '',
 };
-
-// Resource limits (should match backend validation)
-export const MAX_RAM_MB = 8192; // 8GB
-export const MAX_VCPUS = 4;
-export const MAX_DISK_GB = 20;
 
 /**
  * Create a fresh VM form state object.
@@ -310,17 +306,18 @@ export function isValidHostname(hostname) {
  * @param {number} ramMb - RAM in MB.
  * @param {number} vcpus - Number of vCPUs.
  * @param {number} diskGb - Disk size in GB.
+ * @param {object} limits - Resource limits object.
  * @throws {Error} If any resource exceeds limits.
  */
-export function validateResourceLimits(ramMb, vcpus, diskGb) {
-  if (ramMb > MAX_RAM_MB) {
-    throw new Error(`RAM cannot exceed ${MAX_RAM_MB}MB (${MAX_RAM_MB / 1024}GB).`);
+export function validateResourceLimits(ramMb, vcpus, diskGb, limits = { maxRamMb: 8192, maxVcpus: 4, maxDiskGb: 20 }) {
+  if (ramMb > limits.maxRamMb) {
+    throw new Error(`RAM cannot exceed ${limits.maxRamMb}MB (${limits.maxRamMb / 1024}GB).`);
   }
-  if (vcpus > MAX_VCPUS) {
-    throw new Error(`vCPUs cannot exceed ${MAX_VCPUS}.`);
+  if (vcpus > limits.maxVcpus) {
+    throw new Error(`vCPUs cannot exceed ${limits.maxVcpus}.`);
   }
-  if (diskGb > MAX_DISK_GB) {
-    throw new Error(`Disk size cannot exceed ${MAX_DISK_GB}GB.`);
+  if (diskGb > limits.maxDiskGb) {
+    throw new Error(`Disk size cannot exceed ${limits.maxDiskGb}GB.`);
   }
 }
 
@@ -542,9 +539,10 @@ export function buildCloneFormState(config, newVmName) {
  * Convert the UI form state into an API request payload.
  *
  * @param {object} formState - Current create/clone dialog form state.
+ * @param {object} limits - Resource limits.
  * @returns {{config: object, sshPublicKey?: string, setupScript?: string}} Request payload.
  */
-export function buildVmPayload(formState) {
+export function buildVmPayload(formState, limits = { maxRamMb: 8192, maxVcpus: 4, maxDiskGb: 20 }) {
   const vm = {
     name: formState.name.trim(),
     user: formState.user.trim(),
@@ -563,7 +561,7 @@ export function buildVmPayload(formState) {
   };
 
   // Validate resource limits
-  validateResourceLimits(vm.ram_mb, vm.vcpus, vm.disk_gb);
+  validateResourceLimits(vm.ram_mb, vm.vcpus, vm.disk_gb, limits);
 
   if (!vm.name) {
     throw new Error('VM name is required.');
@@ -845,10 +843,20 @@ export default function App() {
   const [subnetValidating, setSubnetValidating] = useState(false);
   const [selectedConfigDetail, setSelectedConfigDetail] = useState(null);
   const [configActionState, setConfigActionState] = useState('idle');
+  const [resourceLimits, setResourceLimits] = useState({
+    maxRamMb: 8192,
+    maxVcpus: 4,
+    maxDiskGb: 20,
+  });
 
   const deferredSearchText = useDeferredValue(searchText);
-  const knownVmNames = new Set(vms.map((vm) => normalizeVmName(vm.name)));
+  // Only deployed/runtime VMs matter for uniqueness checking
+  const deployedVmNames = new Set(
+    vms.filter((vm) => vm.exists === true).map((vm) => normalizeVmName(vm.name))
+  );
+  const knownVmNames = deployedVmNames; // For compatibility with existing code
   const normalizedDraftVmName = normalizeVmName(formState.name);
+  const normalizedOriginalName = formMode === 'edit' ? normalizeVmName(cloneSourceVmName) : null;
   const ownerScopedNetworkGroups = networkGroups.filter(
     (group) => !formState.ownerUserId || group.owner_user_id === formState.ownerUserId,
   );
@@ -858,14 +866,20 @@ export default function App() {
   let draftPayload = null;
   let draftPayloadError = null;
   try {
-    draftPayload = buildVmPayload(formState);
+    draftPayload = buildVmPayload(formState, resourceLimits);
   } catch (error) {
     draftPayloadError = error.message;
   }
 
-  if (!draftPayloadError && normalizedDraftVmName && knownVmNames.has(normalizedDraftVmName)) {
+  // Check uniqueness only against deployed VMs, excluding the original name in edit mode
+  if (
+    !draftPayloadError &&
+    normalizedDraftVmName &&
+    knownVmNames.has(normalizedDraftVmName) &&
+    normalizedDraftVmName !== normalizedOriginalName
+  ) {
     draftPayload = null;
-    draftPayloadError = 'VM name must be unique. Choose a different name.';
+    draftPayloadError = 'VM name must be unique among deployed VMs. Choose a different name.';
   }
 
   // Filter VMs for Runtime VMs tab - only show VMs that actually exist (not config-only entries)
@@ -1557,6 +1571,21 @@ export default function App() {
   }, [apiBase]);
 
   useEffect(() => {
+    async function loadConfig() {
+      try {
+        const result = await fetchConfig(apiBase);
+        if (result.limits) {
+          setResourceLimits(result.limits);
+        }
+      } catch (error) {
+        console.error('Failed to fetch config:', error);
+        // Keep default limits if fetch fails
+      }
+    }
+    void loadConfig();
+  }, [apiBase]);
+
+  useEffect(() => {
     if (!createDialogOpen) {
       return;
     }
@@ -1872,12 +1901,12 @@ export default function App() {
                       const vmName = cfg.vm_name || cfg.config?.vm?.name || 'unnamed';
                       // Ensure we're validating the config object, not the wrapper
                       const configToValidate = cfg.config || cfg;
-                      const validation = validateStoredConfig(configToValidate);
+                      const validation = validateStoredConfig(configToValidate, resourceLimits);
                       return (
                         <ListItemButton
                           key={cfg.id || vmName}
                           onClick={() => {
-                            setSelectedVmName(vmName);
+                            // Don't set selectedVmName for config-only entries to avoid confusion in Runtime VMs tab
                             setSelectedConfigDetail(cfg);
                           }}
                         >
@@ -1917,11 +1946,11 @@ export default function App() {
               </Paper>
 
               <Paper sx={{ p: 2.5 }}>
-                {!selectedConfigDetail ? (
+                {!selectedConfigDetail && mainTab === 0 ? (
                   <Alert severity="info">
                     Select a VM template from the list to view its configuration details.
                   </Alert>
-                ) : (
+                ) : mainTab === 0 ? (
                   <Stack spacing={2.5}>
                     <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
                       <Box>
@@ -1934,7 +1963,7 @@ export default function App() {
                         <Button
                           variant="contained"
                           size="small"
-                          disabled={configActionState !== 'idle' || !validateStoredConfig(selectedConfigDetail.config || selectedConfigDetail).valid}
+                          disabled={configActionState !== 'idle' || !validateStoredConfig(selectedConfigDetail.config || selectedConfigDetail, resourceLimits).valid}
                           onClick={() => {
                             const vmName = selectedConfigDetail.vm_name || selectedConfigDetail.config?.vm?.name;
                             setSelectedVmName(vmName);
@@ -1988,7 +2017,7 @@ export default function App() {
                     </Stack>
 
                     {(() => {
-                      const validation = validateStoredConfig(selectedConfigDetail.config || selectedConfigDetail);
+                      const validation = validateStoredConfig(selectedConfigDetail.config || selectedConfigDetail, resourceLimits);
                       if (!validation.valid) {
                         return (
                           <Alert severity="error">
@@ -2026,7 +2055,7 @@ export default function App() {
                       </Typography>
                     </Box>
                   </Stack>
-                )}
+                ) : null}
               </Paper>
             </Box>
           )}
