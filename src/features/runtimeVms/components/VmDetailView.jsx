@@ -48,8 +48,8 @@ import VmActionButtons from './VmActionButtons.jsx';
  * @param {Function} props.onRefresh - Refresh inventory handler.
  * @param {Function} props.onOpenForm - Open form dialog handler.
  * @param {Function} props.showMessage - Show snackbar message.
- * @param {object} props.vmJobs - Map of vmName -> job info.
- * @param {Function} props.setVmJobs - Update vmJobs state.
+ * @param {object} props.vmPolling - VM polling hook instance.
+ * @param {Function} props.onTrackJob - Track job handler.
  * @param {Function} props.onOpenJobProgress - Open job progress dialog.
  * @returns {import('react').JSX.Element} VM detail view.
  */
@@ -63,13 +63,12 @@ export default function VmDetailView({
   onRefresh,
   onOpenForm,
   showMessage,
-  vmJobs,
-  setVmJobs,
+  vmPolling,
+  onTrackJob,
   onOpenJobProgress,
 }) {
   const [detailLoading, setDetailLoading] = useState(false);
   const [vmDetail, setVmDetail] = useState(selectedVm);
-  const [vmActionState, setVmActionState] = useState('idle');
   const [detailTab, setDetailTab] = useState(0);
   const [snapshotLines, setSnapshotLines] = useState('200');
   const [snapshotLoading, setSnapshotLoading] = useState(false);
@@ -88,8 +87,18 @@ export default function VmDetailView({
     vmDetail?.configured && !vmDetail?.exists && provisionableConfig
   );
   const canCreateSnapshot = Boolean(vmDetail?.exists);
-  const canStartSelectedVm = Boolean(vmDetail?.exists) && !selectedVmIsRunning;
-  const canStopSelectedVm = selectedVmIsRunning;
+  
+  // Check if VM has pending operation via polling hook
+  const pendingOperation = vmPolling.getPendingOperation(selectedVmName);
+  const isVmBusy = Boolean(pendingOperation);
+  
+  // Map pending operation to action state for backward compatibility
+  const vmActionState = pendingOperation
+    ? pendingOperation.replace('_vm', '').replace('provision', 'provision').replace('destroy', 'destroy')
+    : 'idle';
+  
+  const canStartSelectedVm = Boolean(vmDetail?.exists) && !selectedVmIsRunning && !isVmBusy;
+  const canStopSelectedVm = selectedVmIsRunning && !isVmBusy;
   const powerStateLabel = !vmDetail?.exists
     ? 'Not provisioned'
     : selectedVmIsRunning
@@ -145,16 +154,23 @@ export default function VmDetailView({
    * Start the selected VM.
    */
   async function handleStartVm() {
-    setVmActionState('start');
     try {
-      await startVm(apiBase, selectedVmName);
-      showMessage(`Started ${selectedVmName}.`, 'success');
-      await onRefresh();
-      await loadVmDetails();
+      const response = await startVm(apiBase, selectedVmName);
+      
+      if (response.job_id) {
+        onTrackJob(selectedVmName, {
+          job_id: response.job_id,
+          status: response.status || 'queued',
+          type: 'start_vm',
+        });
+        showMessage(`Starting ${selectedVmName}...`, 'info');
+      } else {
+        showMessage(`Started ${selectedVmName}.`, 'success');
+        await onRefresh();
+        await loadVmDetails();
+      }
     } catch (error) {
       showMessage(error.message, 'error');
-    } finally {
-      setVmActionState('idle');
     }
   }
 
@@ -162,16 +178,23 @@ export default function VmDetailView({
    * Stop the selected VM.
    */
   async function handleStopVm() {
-    setVmActionState('stop');
     try {
-      await stopVm(apiBase, selectedVmName);
-      showMessage(`Stopped ${selectedVmName}.`, 'success');
-      await onRefresh();
-      await loadVmDetails();
+      const response = await stopVm(apiBase, selectedVmName);
+      
+      if (response.job_id) {
+        onTrackJob(selectedVmName, {
+          job_id: response.job_id,
+          status: response.status || 'queued',
+          type: 'stop_vm',
+        });
+        showMessage(`Stopping ${selectedVmName}...`, 'info');
+      } else {
+        showMessage(`Stopped ${selectedVmName}.`, 'success');
+        await onRefresh();
+        await loadVmDetails();
+      }
     } catch (error) {
       showMessage(error.message, 'error');
-    } finally {
-      setVmActionState('idle');
     }
   }
 
@@ -186,16 +209,23 @@ export default function VmDetailView({
       return;
     }
 
-    setVmActionState('destroy');
     try {
-      await destroyVm(apiBase, selectedVmName);
-      showMessage(`Destroyed ${selectedVmName}.`, 'success');
-      await onRefresh();
-      await loadVmDetails();
+      const response = await destroyVm(apiBase, selectedVmName);
+      
+      if (response.job_id) {
+        onTrackJob(selectedVmName, {
+          job_id: response.job_id,
+          status: response.status || 'queued',
+          type: 'destroy_vm',
+        });
+        showMessage(`Destroying ${selectedVmName}...`, 'info');
+      } else {
+        showMessage(`Destroyed ${selectedVmName}.`, 'success');
+        await onRefresh();
+        await loadVmDetails();
+      }
     } catch (error) {
       showMessage(error.message, 'error');
-    } finally {
-      setVmActionState('idle');
     }
   }
 
@@ -237,30 +267,24 @@ export default function VmDetailView({
       return;
     }
 
-    setVmActionState('provision');
     try {
       const response = await provisionSavedVm(apiBase, selectedVmName);
 
       if (response.job_id) {
-        setVmJobs((prev) => ({
-          ...prev,
-          [selectedVmName]: {
-            job_id: response.job_id,
-            status: response.status || 'queued',
-            type: 'provision_vm',
-            timestamp: new Date().toISOString(),
-          },
-        }));
+        onTrackJob(selectedVmName, {
+          job_id: response.job_id,
+          status: response.status || 'queued',
+          type: 'provision_vm',
+        });
+        showMessage(`Provisioning ${selectedVmName}...`, 'info');
+      } else {
+        showMessage(`Provisioned ${selectedVmName} from its saved template.`, 'success');
+        await onRefresh();
+        await loadVmDetails();
+        await loadSnapshot();
       }
-
-      showMessage(`Provisioned ${selectedVmName} from its saved template.`, 'success');
-      await onRefresh();
-      await loadVmDetails();
-      await loadSnapshot();
     } catch (error) {
       showMessage(error.message, 'error');
-    } finally {
-      setVmActionState('idle');
     }
   }
 
@@ -270,7 +294,6 @@ export default function VmDetailView({
    * @param {object} patch - Partial policy update.
    */
   async function handleUpdateVmPolicy(patch) {
-    setVmActionState('policy');
     try {
       await updateVmPolicy(apiBase, selectedVmName, patch);
       showMessage(`Updated network policy for ${selectedVmName}.`, 'success');
@@ -278,8 +301,6 @@ export default function VmDetailView({
       await loadVmDetails();
     } catch (error) {
       showMessage(error.message, 'error');
-    } finally {
-      setVmActionState('idle');
     }
   }
 
@@ -287,7 +308,6 @@ export default function VmDetailView({
    * Create a snapshot.
    */
   async function handleCreateRestorePoint() {
-    setVmActionState('snapshot-create');
     try {
       await createVmSnapshot(apiBase, selectedVmName);
       showMessage(`Created a snapshot for ${selectedVmName}.`, 'success');
@@ -295,8 +315,6 @@ export default function VmDetailView({
       await loadVmDetails();
     } catch (error) {
       showMessage(error.message, 'error');
-    } finally {
-      setVmActionState('idle');
     }
   }
 
@@ -362,7 +380,7 @@ export default function VmDetailView({
             canCreateSnapshot={canCreateSnapshot}
             canProvisionStoredConfig={canProvisionStoredConfig}
             vmExists={Boolean(vmDetail?.exists)}
-            hasJobProgress={Boolean(vmJobs[selectedVmName]?.job_id)}
+            hasJobProgress={Boolean(vmPolling.activeJobs.get(selectedVmName)?.job_id)}
             actionState={vmActionState}
             onClone={openCloneDialog}
             onCreateSnapshot={() => void handleCreateRestorePoint()}

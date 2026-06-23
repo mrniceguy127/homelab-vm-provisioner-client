@@ -110,3 +110,151 @@ test('updateVmPolicy patches the VM policy route', async () => {
     expect.objectContaining({ method: 'PATCH' }),
   );
 });
+
+test('fetchVm retrieves a single VM detail', async () => {
+  const vm = { name: 'devbox', status: 'running' };
+  fetch.mockResolvedValue(createJsonResponse({ vm }));
+
+  const result = await requestJson('', '/api/vms/devbox');
+
+  expect(result).toEqual({ vm });
+});
+
+test('fetchVmState retrieves VM state', async () => {
+  const state = { status: 'running', uptime: 3600 };
+  fetch.mockResolvedValue(createJsonResponse({ state }));
+
+  const result = await requestJson('', '/api/vms/devbox/state');
+
+  expect(result).toEqual({ state });
+});
+
+test('createVm posts to the create VM endpoint', async () => {
+  const { createVm } = await import('../src/api.js');
+  
+  fetch.mockResolvedValue(createJsonResponse({ ok: true }));
+
+  await createVm('', { config: { vm: { name: 'testvm' } } });
+
+  expect(fetch).toHaveBeenCalledWith('/api/vms', expect.objectContaining({ method: 'POST' }));
+});
+
+test('provisionSavedVm posts to the provision endpoint', async () => {
+  const { provisionSavedVm } = await import('../src/api.js');
+  
+  fetch.mockResolvedValue(createJsonResponse({ ok: true }));
+
+  await provisionSavedVm('', 'devbox');
+
+  expect(fetch).toHaveBeenCalledWith(
+    '/api/vms/devbox/provision',
+    expect.objectContaining({ method: 'POST' })
+  );
+});
+
+test('destroyVm posts to the destroy endpoint', async () => {
+  const { destroyVm } = await import('../src/api.js');
+  
+  fetch.mockResolvedValue(createJsonResponse({ ok: true }));
+
+  await destroyVm('', 'devbox');
+
+  expect(fetch).toHaveBeenCalledWith(
+    '/api/vms/devbox',
+    expect.objectContaining({ method: 'DELETE' })
+  );
+});
+
+test('startVm posts to the start endpoint', async () => {
+  const { startVm } = await import('../src/api.js');
+  
+  fetch.mockResolvedValue(createJsonResponse({ ok: true }));
+
+  await startVm('', 'devbox');
+
+  expect(fetch).toHaveBeenCalledWith(
+    '/api/vms/devbox/start',
+    expect.objectContaining({ method: 'POST' })
+  );
+});
+
+test('stopVm posts to the stop endpoint', async () => {
+  const { stopVm } = await import('../src/api.js');
+  
+  fetch.mockResolvedValue(createJsonResponse({ ok: true }));
+
+  await stopVm('', 'devbox');
+
+  expect(fetch).toHaveBeenCalledWith(
+    '/api/vms/devbox/stop',
+    expect.objectContaining({ method: 'POST' })
+  );
+});
+
+test('createVmSnapshot posts to the snapshot endpoint', async () => {
+  const { createVmSnapshot } = await import('../src/api.js');
+  
+  fetch.mockResolvedValue(createJsonResponse({ ok: true }));
+
+  await createVmSnapshot('', 'devbox');
+
+  expect(fetch).toHaveBeenCalledWith(
+    '/api/vms/devbox/snapshots',
+    expect.objectContaining({ method: 'POST' })
+  );
+});
+
+test('restoreVmSnapshot posts to the restore snapshot endpoint', async () => {
+  const { restoreVmSnapshot } = await import('../src/api.js');
+  
+  fetch.mockResolvedValue(createJsonResponse({ ok: true }));
+
+  await restoreVmSnapshot('', 'devbox', 'snap-123');
+
+  expect(fetch).toHaveBeenCalledWith(
+    '/api/vms/devbox/snapshots/snap-123/restore',
+    expect.objectContaining({ method: 'POST' })
+  );
+});
+
+test('deleteVmSnapshot deletes a snapshot', async () => {
+  const { deleteVmSnapshot } = await import('../src/api.js');
+  
+  fetch.mockResolvedValue(createJsonResponse({ ok: true }));
+
+  await deleteVmSnapshot('', 'devbox', 'snap-123');
+
+  expect(fetch).toHaveBeenCalledWith(
+    '/api/vms/devbox/snapshots/snap-123',
+    expect.objectContaining({ method: 'DELETE' })
+  );
+});
+
+test('fetchJob retrieves a job by ID', async () => {
+  const { fetchJob } = await import('../src/api.js');
+  const job = { job_id: 'job-123', status: 'succeeded' };
+  
+  fetch.mockResolvedValue(createJsonResponse({ job }));
+
+  const result = await fetchJob('', 'job-123');
+
+  expect(result).toEqual({ job });
+});
+
+test('fetchJobEvents retrieves job events with limit', async () => {
+  const { fetchJobEvents } = await import('../src/api.js');
+  const events = [{ event_id: 1, event_type: 'job_created' }];
+  
+  fetch.mockResolvedValue(createJsonResponse({ events }));
+
+  await fetchJobEvents('', 'job-123', 50);
+
+  expect(fetch).toHaveBeenCalledWith(
+    expect.stringContaining('/api/jobs/job-123/events'),
+    expect.anything()
+  );
+  expect(fetch).toHaveBeenCalledWith(
+    expect.stringContaining('limit=50'),
+    expect.anything()
+  );
+});

@@ -19,6 +19,7 @@ import {
   fetchVms,
 } from './api.js';
 import { normalizeVmName } from './utils/formUtils.js';
+import { useVmPolling } from './hooks/useVmPolling.js';
 import AppHeader from './components/layout/AppHeader.jsx';
 import VmTemplatesPage from './features/vmTemplates/VmTemplatesPage.jsx';
 import RuntimeVmsPage from './features/runtimeVms/RuntimeVmsPage.jsx';
@@ -61,8 +62,20 @@ export default function App() {
   const [jobProgressOpen, setJobProgressOpen] = useState(false);
   const [selectedJobId, setSelectedJobId] = useState(null);
 
-  // Job tracking
-  const [vmJobs, setVmJobs] = useState({});
+  /**
+   * Show a snackbar message.
+   */
+  const showMessage = useCallback((message, severity = 'info') => {
+    setSnackbar({ open: true, severity, message });
+  }, []);
+
+  // VM polling hook for async-aware state management
+  const vmPolling = useVmPolling(
+    apiBase,
+    (updatedVms) => setVms(updatedVms),
+    showMessage,
+    mainTab === 1 // Only poll when on Runtime VMs tab
+  );
 
   // Derived state
   const deployedVmNames = new Set(
@@ -79,13 +92,6 @@ export default function App() {
     configured: configs.length,
     issues: vms.filter((vm) => vm.provisionerError || (!vm.exists && !vm.configured)).length,
   };
-
-  /**
-   * Show a snackbar message.
-   */
-  const showMessage = useCallback((message, severity = 'info') => {
-    setSnackbar({ open: true, severity, message });
-  }, []);
 
   /**
    * Refresh the inventory and API health state.
@@ -166,17 +172,16 @@ export default function App() {
       setMainTab(1);
     }
   }
-
   /**
    * Open job progress dialog.
    */
   function handleOpenJobProgress(vmName) {
-    const vmJob = vmJobs[vmName];
-    if (!vmJob?.job_id) {
+    const jobInfo = vmPolling.activeJobs.get(vmName);
+    if (!jobInfo?.job_id) {
       showMessage('No job found for this VM.', 'warning');
       return;
     }
-    setSelectedJobId(vmJob.job_id);
+    setSelectedJobId(jobInfo.job_id);
     setJobProgressOpen(true);
   }
 
@@ -186,16 +191,19 @@ export default function App() {
   function handleSwitchToVm(vmName, jobId) {
     setMainTab(1);
     if (jobId) {
-      setVmJobs((prev) => ({
-        ...prev,
-        [vmName]: {
-          job_id: jobId,
-          status: 'queued',
-          type: 'provision_vm',
-          timestamp: new Date().toISOString(),
-        },
-      }));
+      vmPolling.trackJob(vmName, {
+        job_id: jobId,
+        status: 'queued',
+        type: 'provision_vm',
+      });
     }
+  }
+
+  /**
+   * Track a job for a VM.
+   */
+  function handleTrackJob(vmName, jobInfo) {
+    vmPolling.trackJob(vmName, jobInfo);
   }
 
   // Load resource limits on mount
@@ -256,7 +264,7 @@ export default function App() {
               inventoryLoading={inventoryLoading}
               searchText={searchText}
               onSearchChange={setSearchText}
-              onRefresh={Object.assign(refreshInventory, { apiBase })}
+              onRefresh={refreshInventory}
               onOpenForm={handleOpenForm}
               onSwitchToVm={handleSwitchToVm}
               showMessage={showMessage}
@@ -274,11 +282,11 @@ export default function App() {
               searchText={searchText}
               apiBase={apiBase}
               onSearchChange={setSearchText}
-              onRefresh={refreshInventory}
+              onRefresh={vmPolling.refreshVms}
               onOpenForm={handleOpenForm}
               showMessage={showMessage}
-              vmJobs={vmJobs}
-              setVmJobs={setVmJobs}
+              vmPolling={vmPolling}
+              onTrackJob={handleTrackJob}
               onOpenJobProgress={handleOpenJobProgress}
             />
           )}
@@ -304,7 +312,7 @@ export default function App() {
         apiBase={apiBase}
         onSuccess={handleFormSuccess}
         showMessage={showMessage}
-        setVmJobs={setVmJobs}
+        onTrackJob={handleTrackJob}
       />
 
       <JobProgressDialog

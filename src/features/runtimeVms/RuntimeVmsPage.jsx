@@ -37,8 +37,8 @@ import VmDetailView from './components/VmDetailView.jsx';
  * @param {Function} props.onRefresh - Refresh inventory handler.
  * @param {Function} props.onOpenForm - Open form dialog handler.
  * @param {Function} props.showMessage - Show snackbar message.
- * @param {object} props.vmJobs - Map of vmName -> job info.
- * @param {Function} props.setVmJobs - Update vmJobs state.
+ * @param {object} props.vmPolling - VM polling hook instance.
+ * @param {Function} props.onTrackJob - Track job handler.
  * @param {Function} props.onOpenJobProgress - Open job progress dialog.
  * @returns {import('react').JSX.Element} Runtime VMs page.
  */
@@ -55,8 +55,8 @@ export default function RuntimeVmsPage({
   onRefresh,
   onOpenForm,
   showMessage,
-  vmJobs,
-  setVmJobs,
+  vmPolling,
+  onTrackJob,
   onOpenJobProgress,
 }) {
   const [selectedVmName, setSelectedVmName] = useState('');
@@ -228,8 +228,8 @@ export default function RuntimeVmsPage({
             onRefresh={onRefresh}
             onOpenForm={onOpenForm}
             showMessage={showMessage}
-            vmJobs={vmJobs}
-            setVmJobs={setVmJobs}
+            vmPolling={vmPolling}
+            onTrackJob={onTrackJob}
             onOpenJobProgress={onOpenJobProgress}
           />
         )}

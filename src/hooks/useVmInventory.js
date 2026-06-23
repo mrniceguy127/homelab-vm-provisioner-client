@@ -20,13 +20,13 @@ export function useVmInventory(apiBase, showMessage) {
   const refreshInventory = useCallback(async (preferredName = '') => {
     setInventoryLoading(true);
     try {
-      const [vmsData, configsData] = await Promise.all([
+      const [vmsResponse, configsResponse] = await Promise.all([
         fetchVms(apiBase),
         fetchConfigs(apiBase),
       ]);
       
-      setVms(vmsData);
-      setConfigs(configsData);
+      setVms(vmsResponse.vms || []);
+      setConfigs(configsResponse.configs || []);
       
       return preferredName;
     } catch (error) {

@@ -62,7 +62,7 @@ export default function VmTemplatesPage({
 
     setConfigActionState('deleting');
     try {
-      await deleteVmConfig(onRefresh.apiBase, configName);
+      await deleteVmConfig(import.meta.env.VITE_API_BASE_URL || '', configName);
       showMessage(`Deleted template: ${configName}`, 'success');
       setSelectedConfigDetail(null);
       await onRefresh();
@@ -94,7 +94,7 @@ export default function VmTemplatesPage({
   async function handleDeploy(vmName) {
     setConfigActionState('provisioning');
     try {
-      const response = await provisionSavedVm(onRefresh.apiBase, vmName);
+      const response = await provisionSavedVm(import.meta.env.VITE_API_BASE_URL || '', vmName);
 
       showMessage(`Provisioned ${vmName} from its saved template.`, 'success');
       await onRefresh();

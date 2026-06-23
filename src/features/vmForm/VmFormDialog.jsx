@@ -43,7 +43,7 @@ import VmFormActions from './components/VmFormActions.jsx';
  * @param {string} props.apiBase - API base URL.
  * @param {Function} props.onSuccess - Success callback.
  * @param {Function} props.showMessage - Show snackbar message.
- * @param {Function} props.setVmJobs - Update vmJobs state.
+ * @param {Function} props.onTrackJob - Track job handler.
  * @returns {import('react').JSX.Element} VM Form Dialog.
  */
 export default function VmFormDialog({
@@ -57,7 +57,7 @@ export default function VmFormDialog({
   apiBase,
   onSuccess,
   showMessage,
-  setVmJobs,
+  onTrackJob,
 }) {
   const [formState, setFormState] = useState(createDefaultFormState());
   const [submitState, setSubmitState] = useState('idle');
@@ -156,15 +156,11 @@ export default function VmFormDialog({
       const nextVmName = response.vmName || preparedPayload.config.vm.name;
 
       if (response.job_id) {
-        setVmJobs((prev) => ({
-          ...prev,
-          [nextVmName]: {
-            job_id: response.job_id,
-            status: response.status || 'queued',
-            type: formMode === 'clone' ? 'clone_vm' : 'provision_vm',
-            timestamp: new Date().toISOString(),
-          },
-        }));
+        onTrackJob(nextVmName, {
+          job_id: response.job_id,
+          status: response.status || 'queued',
+          type: formMode === 'clone' ? 'clone_vm' : 'provision_vm',
+        });
       }
 
       showMessage(
