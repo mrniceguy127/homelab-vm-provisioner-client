@@ -66,9 +66,9 @@ test('buildCloneFormState produces a sanitized clone form', () => {
       name: 'devbox',
       user: 'matt',
       ssh_key_file: '/keys/devbox.pub',
-      ram_mb: 8192,
-      vcpus: 4,
-      disk_gb: 80,
+      ram_mb: 2048,
+      vcpus: 2,
+      disk_gb: 10,
       allow_sudo: true,
       trust: 'trusted',
       owner_user_id: 'user-admin',
@@ -111,9 +111,9 @@ test('buildVmPayload creates the expected API request shape', () => {
         user: 'matt',
         owner_user_id: 'user-admin',
         network_group_id: 'ng-admin',
-        ram_mb: 8192,
-        vcpus: 4,
-        disk_gb: 20,
+        ram_mb: 2048,
+        vcpus: 2,
+        disk_gb: 10,
         allow_same_group_traffic: true,
         allow_host_access: true,
         allow_private_lan_access: false,
@@ -163,9 +163,9 @@ test('buildFormStateFromConfig maps config to form state', () => {
     vm: {
       name: 'testvm',
       user: 'testuser',
-      ram_mb: 8192,
-      vcpus: 4,
-      disk_gb: 80,
+      ram_mb: 2048,
+      vcpus: 2,
+      disk_gb: 10,
       allow_sudo: true,
       trust: 'trusted',
       owner_user_id: 'user-1',
@@ -184,9 +184,9 @@ test('buildFormStateFromConfig maps config to form state', () => {
 
   expect(formState.name).toBe('testvm');
   expect(formState.user).toBe('testuser');
-  expect(formState.ramMb).toBe('8192');
-  expect(formState.vcpus).toBe('4');
-  expect(formState.diskGb).toBe('80');
+  expect(formState.ramMb).toBe('2048');
+  expect(formState.vcpus).toBe('2');
+  expect(formState.diskGb).toBe('10');
   expect(formState.allowSudo).toBe(true);
   expect(formState.trust).toBe('trusted');
   expect(formState.ownerUserId).toBe('user-1');
@@ -267,9 +267,9 @@ test('createDefaultFormState returns default values', () => {
   
   expect(defaults.name).toBe('');
   expect(defaults.user).toBe('');
-  expect(defaults.ramMb).toBe('8192');
-  expect(defaults.vcpus).toBe('4');
-  expect(defaults.diskGb).toBe('20');
+  expect(defaults.ramMb).toBe('2048');
+  expect(defaults.vcpus).toBe('2');
+  expect(defaults.diskGb).toBe('10');
   expect(defaults.allowSudo).toBe(true);
   expect(defaults.trust).toBe('untrusted');
   expect(defaults.allowSameGroupTraffic).toBe(true);

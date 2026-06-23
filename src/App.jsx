@@ -88,9 +88,9 @@ const baseFormState = {
   newNetworkGroupName: '',
   newNetworkGroupProfile: 'isolated_nat',
   newNetworkGroupSubnet: '',
-  ramMb: '8192',
-  vcpus: '4',
-  diskGb: '20',
+  ramMb: '2048',
+  vcpus: '2',
+  diskGb: '10',
   allowSudo: true,
   allowSameGroupTraffic: true,
   allowHostAccess: true,
@@ -868,8 +868,8 @@ export default function App() {
     draftPayloadError = 'VM name must be unique. Choose a different name.';
   }
 
-  // Filter VMs for Runtime VMs tab - only show VMs that actually exist AND are not destroyed
-  const runtimeVms = vms.filter((vm) => vm.exists === true && vm.status !== 'destroyed');
+  // Filter VMs for Runtime VMs tab - only show VMs that actually exist (not config-only entries)
+  const runtimeVms = vms.filter((vm) => vm.exists === true && vm.status !== 'destroyed' && vm.status !== 'unknown');
 
   const filteredVms = runtimeVms.filter((vm) => {
     const searchNeedle = deferredSearchText.trim().toLowerCase();
@@ -1870,7 +1870,9 @@ export default function App() {
                   <List sx={{ p: 0 }}>
                     {filteredConfigs.map((cfg) => {
                       const vmName = cfg.vm_name || cfg.config?.vm?.name || 'unnamed';
-                      const validation = validateStoredConfig(cfg.config || cfg);
+                      // Ensure we're validating the config object, not the wrapper
+                      const configToValidate = cfg.config || cfg;
+                      const validation = validateStoredConfig(configToValidate);
                       return (
                         <ListItemButton
                           key={cfg.id || vmName}
@@ -1929,6 +1931,40 @@ export default function App() {
                         </Typography>
                       </Box>
                       <Stack direction="row" spacing={1}>
+                        <Button
+                          variant="contained"
+                          size="small"
+                          disabled={configActionState !== 'idle' || !validateStoredConfig(selectedConfigDetail.config || selectedConfigDetail).valid}
+                          onClick={() => {
+                            const vmName = selectedConfigDetail.vm_name || selectedConfigDetail.config?.vm?.name;
+                            setSelectedVmName(vmName);
+                            setSelectedVm(vms.find(v => v.name === vmName) || null);
+                            void handleProvisionVm();
+                          }}
+                        >
+                          Deploy
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          disabled={configActionState !== 'idle'}
+                          onClick={() => {
+                            const vmName = selectedConfigDetail.vm_name || selectedConfigDetail.config?.vm?.name;
+                            const config = selectedConfigDetail.config || selectedConfigDetail;
+                            const suggestedCloneName = buildUniqueCloneName(vmName, knownVmNames);
+                            setFormMode('clone');
+                            setCloneSourceVmName(vmName);
+                            setFormState((current) => ({
+                              ...createMetadataAwareFormState(),
+                              ...buildCloneFormState(config, suggestedCloneName),
+                              ownerUserId: config?.vm?.owner_user_id || current.ownerUserId || users[0]?.id || '',
+                              networkGroupId: config?.vm?.network_group_id || '',
+                            }));
+                            setCreateDialogOpen(true);
+                          }}
+                        >
+                          Clone
+                        </Button>
                         <Button
                           variant="outlined"
                           size="small"
